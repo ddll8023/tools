@@ -10,5 +10,5 @@ __pycache__/
 .venv/
 *.egg-info/
 temp/
-
 数据
+models/mineru/

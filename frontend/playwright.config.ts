@@ -17,9 +17,16 @@ export default defineConfig({
       use: { browserName: 'chromium' },
     },
   ],
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: true,
-  },
+  webServer: [
+    {
+      command: 'npm run dev',
+      url: 'http://127.0.0.1:5173',
+      reuseExistingServer: true,
+    },
+    {
+      command: 'cd ../backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 4740',
+      url: 'http://127.0.0.1:4740/docs',
+      reuseExistingServer: true,
+    },
+  ],
 })

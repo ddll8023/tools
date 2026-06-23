@@ -1,4 +1,4 @@
-const { spawn } = require('child_process')
+const { spawn, execSync } = require('child_process')
 const path = require('path')
 const http = require('http')
 
@@ -8,7 +8,7 @@ const BACKEND_DIR = path.join(ROOT_DIR, 'backend')
 const VITE_PORT = 5173
 const BACKEND_PORT = 4740
 
-function waitForBackendReady(maxWait = 30000) {
+function waitForBackendReady(maxWait = 60000) {
   return new Promise((resolve, reject) => {
     const start = Date.now()
     const check = () => {
@@ -16,19 +16,26 @@ function waitForBackendReady(maxWait = 30000) {
       const req = http.request(`http://127.0.0.1:${BACKEND_PORT}/api/v1/health`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        timeout: 2000
+        timeout: 3000
       }, (res) => {
         let body = ''
         res.on('data', (chunk) => body += chunk)
-        res.on('end', () => resolve())
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body)
+            if (json.code === 0) return resolve()   // 确认后端真正就绪
+          } catch {}
+          if (Date.now() - start > maxWait) return reject(new Error('后端未返回正常状态'))
+          setTimeout(check, 500)
+        })
       })
       req.on('error', () => {
-        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时'))
+        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时（30s）'))
         setTimeout(check, 500)
       })
       req.on('timeout', () => {
         req.destroy()
-        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时'))
+        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时（30s）'))
         setTimeout(check, 500)
       })
       req.write(postData)
@@ -70,39 +77,93 @@ function startProcess(name, command, args, options) {
 async function main() {
   let backendProc, viteProc, electronProc
 
-  const cleanup = () => {
-    if (electronProc) electronProc.kill()
-    if (viteProc) viteProc.kill()
-    if (backendProc) backendProc.kill()
+  function forceKill(proc) {
+    if (!proc || !proc.pid) return
+    try {
+      if (process.platform === 'win32') {
+        execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' })
+      } else {
+        proc.kill('SIGKILL')
+      }
+    } catch {}
   }
 
-  process.on('SIGINT', () => {
+  const cleanup = () => {
+    if (electronProc) { electronProc.kill(); forceKill(electronProc) }
+    if (viteProc) { viteProc.kill(); forceKill(viteProc) }
+    if (backendProc) { backendProc.kill(); forceKill(backendProc) }
+  }
+
+  const shutdown = () => {
     cleanup()
     process.exit(0)
+  }
+
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
+  if (process.stdin.isTTY) {
+    process.stdin.on('close', shutdown)
+  }
+
+  // 进程意外退出时强制清理子进程（仅同步操作可用）
+  process.on('exit', () => {
+    const pids = [backendProc, viteProc, electronProc]
+      .filter(p => p && p.pid)
+      .map(p => p.pid)
+    if (pids.length === 0) return
+    if (process.platform === 'win32') {
+      try {
+        execSync(`taskkill /F /T /PID ${pids.join(' /PID ')}`, { stdio: 'ignore' })
+      } catch {}
+    }
   })
 
-  // 1. 启动后端
-  console.log('[dev-runner] 启动后端 FastAPI ...')
-  backendProc = startProcess('backend', 'uv', [
-    'run', 'uvicorn', 'app.main:app',
-    '--host', '127.0.0.1', '--port', String(BACKEND_PORT), '--reload'
-  ], { cwd: BACKEND_DIR })
+  // 1. 编译 Electron 主进程
+  console.log('[dev-runner] 1/3 编译 Electron 主进程 ...')
+  const tscProc = spawn('npx', ['tsc', '-p', 'electron/tsconfig.json'], {
+    cwd: ROOT_DIR, shell: true, stdio: 'inherit'
+  })
+  await new Promise((resolve, reject) => {
+    tscProc.on('close', (code) => {
+      if (code !== 0) return reject(new Error('TypeScript 编译失败'))
+      resolve()
+    })
+  })
+  console.log('[dev-runner] ✓ TypeScript 编译完成')
+
+  // 2. 启动后端（直接 spawn，不用 startProcess 以避免 shell: true 的管道问题）
+  console.log('[dev-runner] 2/3 启动后端 FastAPI ...')
+  const pythonBin = path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
+  backendProc = spawn(pythonBin, [
+    '-m', 'uvicorn', 'app.main:app',
+    '--host', '127.0.0.1', '--port', String(BACKEND_PORT),
+  ], {
+    cwd: BACKEND_DIR,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PYTHONUNBUFFERED: '1' }
+  })
+  backendProc.stdout.on('data', (d) => process.stdout.write(`[backend] ${d}`))
+  backendProc.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`))
+  backendProc.on('error', (err) => console.error(`[dev-runner] ❌ 后端进程错误:`, err.message))
+  backendProc.on('exit', (code, signal) => {
+    if (code !== null) console.log(`[dev-runner] ⚠ 后端进程退出, code: ${code}`)
+  })
 
   await waitForBackendReady()
-  console.log('[dev-runner] 后端已就绪')
+  console.log('[dev-runner] ✓ 后端已就绪 (http://127.0.0.1:4740)')
 
-  // 2. 启动 Vite
-  console.log('[dev-runner] 启动 Vite 开发服务器 ...')
+  // 3. 启动 Vite
+  console.log('[dev-runner] 3/3 启动 Vite 开发服务器 ...')
   viteProc = startProcess('vite', 'npm', ['run', 'dev'], { cwd: FRONTEND_DIR })
 
   await waitForViteReady()
-  console.log('[dev-runner] Vite 已就绪')
+  console.log('[dev-runner] ✓ Vite 已就绪 (http://127.0.0.1:5173)')
 
-  // 3. 启动 Electron
+  // 4. 启动 Electron
   console.log('[dev-runner] 启动 Electron ...')
   const electronPath = require('electron')
   electronProc = spawn(electronPath, ['.'], {
-    cwd: __dirname,
+    cwd: ROOT_DIR,
     stdio: 'inherit',
     env: { ...process.env, BACKEND_MANAGED: '1' }
   })
@@ -115,6 +176,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[dev-runner] 启动失败:', err)
+  console.error('[dev-runner] ❌ 启动失败:', err.message || err)
   process.exit(1)
 })

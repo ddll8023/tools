@@ -16,4 +16,10 @@ test.describe('PDF 转 Markdown 工具页', () => {
   test('显示文件格式限制提示', async ({ page }) => {
     await expect(page.getByText('支持 .pdf 格式，最大 50MB')).toBeVisible()
   })
+
+  test('显示深度解析复选框', async ({ page }) => {
+    await expect(page.locator('input[type="checkbox"]')).toBeVisible()
+    await expect(page.getByText('深度解析')).toBeVisible()
+    await expect(page.locator('input[type="checkbox"]')).not.toBeChecked()
+  })
 })

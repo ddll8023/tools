@@ -1,14 +1,16 @@
 /**
  * PDF 转 Markdown 工具页
- * 功能描述：上传 PDF → 转换 → 预览 → 下载，接入后端 API
+ * 功能描述：上传 PDF → 转换 → 预览 → 下载，支持标准/深度双引擎
  * 依赖组件：无
  */
 <script setup lang="ts">
-import { ref } from 'vue'
-import { convertPdf, getPreview, downloadMd } from '@/api/tools'
+import { ref, computed } from 'vue'
+import { marked } from 'marked'
+import { convertPdf, getPreview, getProgress, downloadMd } from '@/api/tools'
 import type { PreviewResponse } from '@/api/tools'
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024
+const POLL_INTERVAL = 1500
 
 type PageState = 'upload' | 'progress' | 'result' | 'error'
 
@@ -17,6 +19,14 @@ const errorMessage = ref('')
 const preview = ref<PreviewResponse | null>(null)
 const selectedFile = ref<File | null>(null)
 const currentTaskId = ref('')
+const deepParse = ref(false)
+const progressValue = ref(0)
+const progressStage = ref('')
+
+const renderedMarkdown = computed(() => {
+  if (!preview.value) return ''
+  return marked.parse(preview.value.markdown_content)
+})
 
 function validateFile(file: File): string | null {
   if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -59,15 +69,43 @@ async function handleFile(file: File) {
   currentState.value = 'progress'
 
   try {
-    const result = await convertPdf(file)
-    currentTaskId.value = result.task_id
+    const result = await convertPdf(file, deepParse.value)
 
-    const data = await getPreview(result.task_id)
-    preview.value = data
-    currentState.value = 'result'
+    if (deepParse.value) {
+      currentTaskId.value = result.task_id
+      await pollProgress(result.task_id)
+      const data = await getPreview(result.task_id)
+      preview.value = data
+      currentState.value = 'result'
+    } else {
+      currentTaskId.value = result.task_id
+      const data = await getPreview(result.task_id)
+      preview.value = data
+      currentState.value = 'result'
+    }
   } catch (e: any) {
     errorMessage.value = e.message || '转换失败，请稍后重试'
     currentState.value = 'error'
+  }
+}
+
+async function pollProgress(taskId: string) {
+  while (true) {
+    try {
+      const p = await getProgress(taskId)
+      progressValue.value = p.progress
+      progressStage.value = p.stage
+
+      if (p.progress < 0) {
+        throw new Error(p.stage || '深度解析失败')
+      }
+      if (p.progress >= 100) break
+    } catch (e: any) {
+      errorMessage.value = e.message || '深度解析失败'
+      currentState.value = 'error'
+      return
+    }
+    await new Promise(r => setTimeout(r, POLL_INTERVAL))
   }
 }
 
@@ -87,16 +125,16 @@ function resetUpload() {
   preview.value = null
   selectedFile.value = null
   currentTaskId.value = ''
+  deepParse.value = false
+  progressValue.value = 0
+  progressStage.value = ''
 }
 </script>
 
 <template>
   <main class="mx-auto w-full max-w-[860px] py-7">
-    <!-- 上传 -->
     <section class="mb-5 rounded-2xl border border-border bg-surface p-8">
-      <div
-        class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary"
-      >
+      <div class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
         <font-awesome-icon :icon="['far', 'file']" class="mr-1.5" />
         选择文件
       </div>
@@ -104,18 +142,13 @@ function resetUpload() {
       <div v-if="currentState === 'upload' || currentState === 'error'">
         <div
           class="cursor-pointer rounded-xl border-2 border-dashed border-border py-11 text-center transition-all duration-250 hover:border-primary hover:bg-primary-light"
-          @dragover="onDragOver"
-          @drop="onDrop"
+          @dragover="onDragOver" @drop="onDrop"
         >
           <div class="mb-3.5 text-[38px] text-text-tertiary">
             <font-awesome-icon :icon="['fas', 'file-pdf']" />
           </div>
-          <h2 class="mb-1.5 text-[15px] font-semibold">
-            将 PDF 文件拖拽到此处
-          </h2>
-          <p class="mb-[18px] text-[13px] text-text-secondary">
-            或点击下方按钮选择文件
-          </p>
+          <h2 class="mb-1.5 text-[15px] font-semibold">将 PDF 文件拖拽到此处</h2>
+          <p class="mb-[18px] text-[13px] text-text-secondary">或点击下方按钮选择文件</p>
           <button
             class="inline-flex items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white cursor-pointer transition-all duration-200 hover:bg-primary-dark"
             @click="$refs.fileInput.click()"
@@ -123,69 +156,69 @@ function resetUpload() {
             <font-awesome-icon :icon="['fas', 'upload']" />
             选择 PDF 文件
           </button>
-          <div class="mt-3.5 text-[12px] text-text-tertiary">
-            支持 .pdf 格式，最大 50MB
-          </div>
+          <div class="mt-3.5 text-[12px] text-text-tertiary">支持 .pdf 格式，最大 50MB</div>
         </div>
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".pdf"
-          class="hidden"
-          @change="onFileChange"
-        />
+
+        <label class="mt-4 flex cursor-pointer items-center gap-2.5 text-[13px] text-text-secondary hover:text-text">
+          <input v-model="deepParse" type="checkbox" class="h-4 w-4 cursor-pointer accent-primary" />
+          <span>深度解析（适用于复杂排版、扫描件或多栏布局）</span>
+        </label>
+
+        <input ref="fileInput" type="file" accept=".pdf" class="hidden" @change="onFileChange" />
       </div>
 
-      <!-- 文件已选 -->
       <div
         v-if="currentState === 'progress' || currentState === 'result'"
         class="mt-[18px] flex items-center justify-center gap-3 rounded-lg bg-[#F9F9F6] px-5 py-3 text-[13px]"
       >
-        <font-awesome-icon
-          :icon="['far', 'circle-check']"
-          class="text-success"
-        />
+        <font-awesome-icon :icon="['far', 'circle-check']" class="text-success" />
         <span class="font-medium">{{ selectedFile?.name }}</span>
-        <span v-if="selectedFile" class="text-text-secondary">
-          ({{ (selectedFile.size / 1024 / 1024).toFixed(1) }} MB)
-        </span>
+        <span v-if="selectedFile" class="text-text-secondary">({{ (selectedFile.size / 1024 / 1024).toFixed(1) }} MB)</span>
       </div>
     </section>
 
     <!-- 进度 -->
-    <section
-      v-if="currentState === 'progress'"
-      class="mb-5 rounded-2xl border border-border bg-surface p-8"
-    >
-      <div
-        class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary"
-      >
+    <section v-if="currentState === 'progress'" class="mb-5 rounded-2xl border border-border bg-surface p-8">
+      <div class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
         <font-awesome-icon :icon="['far', 'hourglass-half']" class="mr-1.5" />
         正在处理
       </div>
 
-      <div class="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-[#F0F0EC]">
-        <div
-          class="h-full w-full animate-pulse rounded-full bg-primary transition-all duration-400"
-        ></div>
-      </div>
+      <template v-if="!deepParse">
+        <div class="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-[#F0F0EC]">
+          <div class="h-full w-full animate-pulse rounded-full bg-primary transition-all duration-400"></div>
+        </div>
+        <div class="flex items-center gap-2.5 text-[13px] font-medium">
+          <span class="w-5 text-center text-sm text-primary">
+            <font-awesome-icon :icon="['fas', 'spinner']" spin />
+          </span>
+          正在解析 PDF 文件...
+        </div>
+      </template>
 
-      <div class="flex items-center gap-2.5 text-[13px] font-medium">
-        <span class="w-5 text-center text-sm text-primary">
-          <font-awesome-icon :icon="['fas', 'spinner']" spin />
-        </span>
-        正在解析 PDF 文件...
-      </div>
+      <template v-else>
+        <div class="mb-3 flex items-center justify-between text-[12px] text-text-secondary">
+          <span>{{ progressStage }}</span>
+          <span>{{ progressValue }}%</span>
+        </div>
+        <div class="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-[#F0F0EC]">
+          <div
+            class="h-full rounded-full bg-primary transition-all duration-500"
+            :style="{ width: progressValue + '%' }"
+          ></div>
+        </div>
+        <div class="flex items-center gap-2.5 text-[13px] font-medium">
+          <span class="w-5 text-center text-sm text-primary">
+            <font-awesome-icon :icon="['fas', 'spinner']" spin />
+          </span>
+          {{ progressStage }}
+        </div>
+      </template>
     </section>
 
     <!-- 结果 -->
-    <section
-      v-if="currentState === 'result' && preview"
-      class="mb-5 rounded-2xl border border-border bg-surface p-8"
-    >
-      <div
-        class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary"
-      >
+    <section v-if="currentState === 'result' && preview" class="mb-5 rounded-2xl border border-border bg-surface p-8">
+      <div class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
         <font-awesome-icon :icon="['far', 'file-lines']" class="mr-1.5" />
         转换结果
       </div>
@@ -207,38 +240,22 @@ function resetUpload() {
         </button>
       </div>
 
-      <div
-        class="mb-3 flex items-center justify-between text-[12px] text-text-secondary"
-      >
+      <div class="mb-3 flex items-center justify-between text-[12px] text-text-secondary">
         <div>
-          <span class="mr-4">
-            <font-awesome-icon :icon="['far', 'file']" class="mr-1" />{{ preview.page_count }} 页
-          </span>
-          <span class="mr-4">
-            <font-awesome-icon :icon="['fas', 'table']" class="mr-1" />{{ preview.table_count }} 个表格
-          </span>
-          <span>
-            <font-awesome-icon :icon="['far', 'image']" class="mr-1" />{{ preview.image_count }} 张图片
-          </span>
+          <span class="mr-4"><font-awesome-icon :icon="['far', 'file']" class="mr-1" />{{ preview.page_count }} 页</span>
+          <span class="mr-4"><font-awesome-icon :icon="['fas', 'table']" class="mr-1" />{{ preview.table_count }} 个表格</span>
+          <span><font-awesome-icon :icon="['far', 'image']" class="mr-1" />{{ preview.image_count }} 张图片</span>
         </div>
       </div>
 
-      <div
-        class="max-h-[420px] overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-[#F7F7F4] p-6 font-mono text-[13px] leading-relaxed text-[#3A3A3A]"
-      >
-        {{ preview.markdown_content }}
+      <div class="markdown-preview max-h-[560px] overflow-y-auto rounded-lg border border-border bg-surface p-6">
+        <div v-html="renderedMarkdown" class="max-w-none"></div>
       </div>
     </section>
 
     <!-- 错误 -->
-    <section
-      v-if="currentState === 'error'"
-      class="mt-4 flex items-start gap-3 rounded-lg border border-[#FFD7D7] bg-[#FFF5F5] p-4 pl-5"
-    >
-      <font-awesome-icon
-        :icon="['far', 'circle-xmark']"
-        class="mt-0.5 text-lg text-error"
-      />
+    <section v-if="currentState === 'error'" class="mt-4 flex items-start gap-3 rounded-lg border border-[#FFD7D7] bg-[#FFF5F5] p-4 pl-5">
+      <font-awesome-icon :icon="['far', 'circle-xmark']" class="mt-0.5 text-lg text-error" />
       <div class="flex-1">
         <h4 class="mb-1 text-[14px] font-semibold">转换失败</h4>
         <p class="text-[13px] text-text-secondary">{{ errorMessage }}</p>
@@ -257,3 +274,155 @@ function resetUpload() {
     </footer>
   </main>
 </template>
+
+<style scoped>
+.markdown-preview h1 {
+  margin-bottom: 16px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+}
+.markdown-preview h2 {
+  margin-top: 28px;
+  margin-bottom: 12px;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 6px;
+}
+.markdown-preview h3 {
+  margin-top: 22px;
+  margin-bottom: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text);
+}
+.markdown-preview h4 {
+  margin-top: 18px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text);
+}
+.markdown-preview p {
+  margin-bottom: 14px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-text);
+}
+.markdown-preview ul,
+.markdown-preview ol {
+  margin-bottom: 14px;
+  padding-left: 22px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-text);
+}
+.markdown-preview ul {
+  list-style-type: disc;
+}
+.markdown-preview ol {
+  list-style-type: decimal;
+}
+.markdown-preview li {
+  margin-bottom: 4px;
+}
+.markdown-preview li > ul,
+.markdown-preview li > ol {
+  margin-bottom: 0;
+}
+.markdown-preview code {
+  padding: 2px 6px;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12.5px;
+  background-color: var(--color-hover);
+  border-radius: 4px;
+  color: #e74c3c;
+}
+.markdown-preview pre {
+  margin-bottom: 16px;
+  padding: 16px;
+  overflow-x: auto;
+  background-color: #1e1e1e;
+  border-radius: 8px;
+  line-height: 1.55;
+}
+.markdown-preview pre code {
+  padding: 0;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12.5px;
+  background: none;
+  border-radius: 0;
+  color: #d4d4d4;
+}
+.markdown-preview blockquote {
+  margin-bottom: 14px;
+  padding: 10px 16px;
+  border-left: 3px solid var(--color-primary);
+  background-color: var(--color-primary-light);
+  border-radius: 0 6px 6px 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text);
+}
+.markdown-preview table {
+  margin-bottom: 16px;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.markdown-preview th,
+.markdown-preview td {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  text-align: left;
+}
+.markdown-preview th {
+  background-color: var(--color-hover);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.markdown-preview td {
+  color: var(--color-text);
+}
+.markdown-preview tr:nth-child(even) td {
+  background-color: var(--color-bg);
+}
+.markdown-preview hr {
+  margin: 20px 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+.markdown-preview a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: opacity 0.2s;
+}
+.markdown-preview a:hover {
+  opacity: 0.8;
+}
+.markdown-preview strong {
+  font-weight: 650;
+}
+.markdown-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.markdown-preview > :first-child {
+  margin-top: 0;
+}
+.markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+</style>

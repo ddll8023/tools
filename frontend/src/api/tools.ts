@@ -2,6 +2,7 @@
  * 工具 API
  * 功能描述：PDF 转 Markdown 等工具的后端 API 调用
  */
+
 import type { ApiResponse } from '@/types/tool'
 
 const API_BASE = 'http://127.0.0.1:4740'
@@ -19,9 +20,15 @@ export interface PreviewResponse {
   image_count: number
 }
 
-export async function convertPdf(file: File): Promise<ConvertResponse> {
+export interface GetProgressResponse {
+  progress: number
+  stage: string
+}
+
+export async function convertPdf(file: File, deepParse = false): Promise<ConvertResponse> {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('deep_parse', String(deepParse))
 
   const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/convert`, {
     method: 'POST',
@@ -35,6 +42,22 @@ export async function convertPdf(file: File): Promise<ConvertResponse> {
   }
 
   return json.data as ConvertResponse
+}
+
+export async function getProgress(taskId: string): Promise<GetProgressResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+
+  const json: ApiResponse<GetProgressResponse> = await res.json()
+
+  if (json.code !== 0) {
+    throw new Error(json.message || '获取进度失败')
+  }
+
+  return json.data as GetProgressResponse
 }
 
 export async function getPreview(taskId: string): Promise<PreviewResponse> {

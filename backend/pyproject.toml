@@ -4,9 +4,22 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "accelerate>=1.5",
+    "doclayout-yolo>=0.0.4",
+    "einops>=0.8",
     "fastapi>=0.138.0",
+    "ftfy>=6.3.1",
+    "mineru>=3.2.0",
+    "openai>=2.43.0",
+    "opencv-python>=4.11.0.86",
+    "paddlepaddle>=3.3.1",
+    "pillow>=12.2.0",
+    "pyclipper>=1.4.0",
     "pydantic-settings>=2.14.2",
     "pymupdf>=1.27.2.3",
     "python-multipart>=0.0.32",
+    "shapely>=2.1.2",
+    "transformers>=4.57,<4.58",
+    "ultralytics>=8.4.75",
     "uvicorn>=0.49.0",
 ]
