@@ -8,3 +8,9 @@ export interface ToolConfig {
   component: () => Promise<{ default: any }>
   sidebarDefaultCollapsed?: boolean
 }
+
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T | null
+}

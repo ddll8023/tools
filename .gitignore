@@ -9,4 +9,6 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+temp/
 
+数据

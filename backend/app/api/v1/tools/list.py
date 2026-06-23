@@ -1,9 +1,10 @@
+"""工具列表接口"""
 from fastapi import APIRouter
 from app.schemas.response import success, ApiResponse
 
-router = APIRouter(prefix="/api/v1/tools", tags=["tools"])
+router = APIRouter(tags=["tools"])
 
 
-@router.post("/list", response_model=ApiResponse)
+@router.post("/api/v1/tools/list", response_model=ApiResponse)
 def list_tools():
     return success(data={"tools": []})

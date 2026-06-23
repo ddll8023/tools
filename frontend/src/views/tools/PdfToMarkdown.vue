@@ -1,42 +1,97 @@
 /**
  * PDF 转 Markdown 工具页
- * 功能描述：上传 PDF → 转换 → 预览 → 下载，全流程 UI 骨架
+ * 功能描述：上传 PDF → 转换 → 预览 → 下载，接入后端 API
  * 依赖组件：无
  */
 <script setup lang="ts">
 import { ref } from 'vue'
+import { convertPdf, getPreview, downloadMd } from '@/api/tools'
+import type { PreviewResponse } from '@/api/tools'
 
-const currentState = ref<'upload' | 'progress' | 'result' | 'error'>('upload')
+const MAX_FILE_SIZE = 50 * 1024 * 1024
 
-const stateLabels: Record<string, string> = {
-  upload: '上传状态',
-  progress: '转换中',
-  result: '结果展示',
-  error: '错误状态'
+type PageState = 'upload' | 'progress' | 'result' | 'error'
+
+const currentState = ref<PageState>('upload')
+const errorMessage = ref('')
+const preview = ref<PreviewResponse | null>(null)
+const selectedFile = ref<File | null>(null)
+const currentTaskId = ref('')
+
+function validateFile(file: File): string | null {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    return '仅支持 PDF 格式'
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return '文件大小不能超过 50MB'
+  }
+  return null
 }
 
-const stateList = ['upload', 'progress', 'result', 'error'] as const
+function onFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  handleFile(file)
+  input.value = ''
+}
 
-function setState(state: typeof currentState.value) {
-  currentState.value = state
+function onDrop(event: DragEvent) {
+  event.preventDefault()
+  const file = event.dataTransfer?.files?.[0]
+  if (!file) return
+  handleFile(file)
+}
+
+function onDragOver(event: DragEvent) {
+  event.preventDefault()
+}
+
+async function handleFile(file: File) {
+  const err = validateFile(file)
+  if (err) {
+    errorMessage.value = err
+    currentState.value = 'error'
+    return
+  }
+
+  selectedFile.value = file
+  currentState.value = 'progress'
+
+  try {
+    const result = await convertPdf(file)
+    currentTaskId.value = result.task_id
+
+    const data = await getPreview(result.task_id)
+    preview.value = data
+    currentState.value = 'result'
+  } catch (e: any) {
+    errorMessage.value = e.message || '转换失败，请稍后重试'
+    currentState.value = 'error'
+  }
+}
+
+async function handleDownload() {
+  if (!currentTaskId.value) return
+  try {
+    await downloadMd(currentTaskId.value)
+  } catch (e: any) {
+    errorMessage.value = e.message || '下载失败'
+    currentState.value = 'error'
+  }
+}
+
+function resetUpload() {
+  currentState.value = 'upload'
+  errorMessage.value = ''
+  preview.value = null
+  selectedFile.value = null
+  currentTaskId.value = ''
 }
 </script>
 
 <template>
   <main class="mx-auto w-full max-w-[860px] py-7">
-    <!-- 演示控制 -->
-    <div class="mb-5 flex gap-2">
-      <button
-        v-for="state in stateList"
-        :key="state"
-        class="cursor-pointer rounded-full border border-border bg-surface px-3 py-1 font-inherit text-xs text-text-secondary transition-all duration-200 hover:border-primary hover:text-primary-dark"
-        :class="{ '!border-primary !bg-primary-light !text-primary-dark': currentState === state }"
-        @click="setState(state)"
-      >
-        {{ stateLabels[state] }}
-      </button>
-    </div>
-
     <!-- 上传 -->
     <section class="mb-5 rounded-2xl border border-border bg-surface p-8">
       <div
@@ -46,44 +101,53 @@ function setState(state: typeof currentState.value) {
         选择文件
       </div>
 
-      <div
-        class="cursor-pointer rounded-xl border-2 border-dashed border-border py-11 text-center transition-all duration-250 hover:border-primary hover:bg-primary-light"
-      >
-        <div class="mb-3.5 text-[38px] text-text-tertiary">
-          <font-awesome-icon :icon="['fas', 'file-pdf']" />
-        </div>
-        <h2 class="mb-1.5 text-[15px] font-semibold">
-          将 PDF 文件拖拽到此处
-        </h2>
-        <p class="mb-[18px] text-[13px] text-text-secondary">
-          或点击下方按钮选择文件
-        </p>
-        <button
-          class="inline-flex items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white cursor-pointer transition-all duration-200 hover:bg-primary-dark"
+      <div v-if="currentState === 'upload' || currentState === 'error'">
+        <div
+          class="cursor-pointer rounded-xl border-2 border-dashed border-border py-11 text-center transition-all duration-250 hover:border-primary hover:bg-primary-light"
+          @dragover="onDragOver"
+          @drop="onDrop"
         >
-          <font-awesome-icon :icon="['fas', 'upload']" />
-          选择 PDF 文件
-        </button>
-        <div class="mt-3.5 text-[12px] text-text-tertiary">
-          支持 .pdf 格式，最大 50MB
+          <div class="mb-3.5 text-[38px] text-text-tertiary">
+            <font-awesome-icon :icon="['fas', 'file-pdf']" />
+          </div>
+          <h2 class="mb-1.5 text-[15px] font-semibold">
+            将 PDF 文件拖拽到此处
+          </h2>
+          <p class="mb-[18px] text-[13px] text-text-secondary">
+            或点击下方按钮选择文件
+          </p>
+          <button
+            class="inline-flex items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white cursor-pointer transition-all duration-200 hover:bg-primary-dark"
+            @click="$refs.fileInput.click()"
+          >
+            <font-awesome-icon :icon="['fas', 'upload']" />
+            选择 PDF 文件
+          </button>
+          <div class="mt-3.5 text-[12px] text-text-tertiary">
+            支持 .pdf 格式，最大 50MB
+          </div>
         </div>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".pdf"
+          class="hidden"
+          @change="onFileChange"
+        />
       </div>
 
       <!-- 文件已选 -->
       <div
-        v-if="currentState !== 'upload'"
+        v-if="currentState === 'progress' || currentState === 'result'"
         class="mt-[18px] flex items-center justify-center gap-3 rounded-lg bg-[#F9F9F6] px-5 py-3 text-[13px]"
       >
         <font-awesome-icon
           :icon="['far', 'circle-check']"
           class="text-success"
         />
-        <span class="font-medium">2024年度报告.pdf</span>
-        <span class="text-text-secondary">(2.4 MB)</span>
-        <span
-          class="ml-auto cursor-pointer p-1 text-text-tertiary hover:text-error"
-        >
-          <font-awesome-icon :icon="['far', 'circle-xmark']" />
+        <span class="font-medium">{{ selectedFile?.name }}</span>
+        <span v-if="selectedFile" class="text-text-secondary">
+          ({{ (selectedFile.size / 1024 / 1024).toFixed(1) }} MB)
         </span>
       </div>
     </section>
@@ -97,46 +161,26 @@ function setState(state: typeof currentState.value) {
         class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary"
       >
         <font-awesome-icon :icon="['far', 'hourglass-half']" class="mr-1.5" />
-        转换中
+        正在处理
       </div>
 
       <div class="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-[#F0F0EC]">
         <div
-          class="h-full w-[65%] rounded-full bg-primary transition-all duration-400"
+          class="h-full w-full animate-pulse rounded-full bg-primary transition-all duration-400"
         ></div>
       </div>
 
-      <div class="flex flex-col gap-2.5 text-[13px]">
-        <div class="flex items-center gap-2.5 text-success">
-          <span class="w-5 text-center text-sm">
-            <font-awesome-icon :icon="['far', 'circle-check']" />
-          </span>
-          读取 PDF 文件
-        </div>
-        <div class="flex items-center gap-2.5 text-success">
-          <span class="w-5 text-center text-sm">
-            <font-awesome-icon :icon="['far', 'circle-check']" />
-          </span>
-          提取文本内容
-        </div>
-        <div class="flex items-center gap-2.5 text-success">
-          <span class="w-5 text-center text-sm">
-            <font-awesome-icon :icon="['far', 'circle-check']" />
-          </span>
-          提取表格
-        </div>
-        <div class="flex items-center gap-2.5 font-medium">
-          <span class="w-5 text-center text-sm text-primary">
-            <font-awesome-icon :icon="['fas', 'spinner']" spin />
-          </span>
-          生成 Markdown
-        </div>
+      <div class="flex items-center gap-2.5 text-[13px] font-medium">
+        <span class="w-5 text-center text-sm text-primary">
+          <font-awesome-icon :icon="['fas', 'spinner']" spin />
+        </span>
+        正在解析 PDF 文件...
       </div>
     </section>
 
     <!-- 结果 -->
     <section
-      v-if="currentState === 'result'"
+      v-if="currentState === 'result' && preview"
       class="mb-5 rounded-2xl border border-border bg-surface p-8"
     >
       <div
@@ -149,18 +193,14 @@ function setState(state: typeof currentState.value) {
       <div class="mb-[18px] flex flex-wrap gap-2.5">
         <button
           class="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white transition-all duration-200 hover:bg-primary-dark"
+          @click="handleDownload"
         >
           <font-awesome-icon :icon="['fas', 'download']" />
           下载 .md
         </button>
         <button
           class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-transparent px-[22px] py-[9px] font-inherit text-[13px] font-medium text-text-secondary transition-all duration-200 hover:border-[#999] hover:text-text"
-        >
-          <font-awesome-icon :icon="['far', 'copy']" />
-          复制内容
-        </button>
-        <button
-          class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-transparent px-[22px] py-[9px] font-inherit text-[13px] font-medium text-text-secondary transition-all duration-200 hover:border-[#999] hover:text-text"
+          @click="resetUpload"
         >
           <font-awesome-icon :icon="['fas', 'rotate']" />
           重新上传
@@ -172,13 +212,13 @@ function setState(state: typeof currentState.value) {
       >
         <div>
           <span class="mr-4">
-            <font-awesome-icon :icon="['far', 'file']" class="mr-1" />12 页
+            <font-awesome-icon :icon="['far', 'file']" class="mr-1" />{{ preview.page_count }} 页
           </span>
           <span class="mr-4">
-            <font-awesome-icon :icon="['fas', 'table']" class="mr-1" />3 个表格
+            <font-awesome-icon :icon="['fas', 'table']" class="mr-1" />{{ preview.table_count }} 个表格
           </span>
           <span>
-            <font-awesome-icon :icon="['far', 'image']" class="mr-1" />2 张图片
+            <font-awesome-icon :icon="['far', 'image']" class="mr-1" />{{ preview.image_count }} 张图片
           </span>
         </div>
       </div>
@@ -186,28 +226,7 @@ function setState(state: typeof currentState.value) {
       <div
         class="max-h-[420px] overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-[#F7F7F4] p-6 font-mono text-[13px] leading-relaxed text-[#3A3A3A]"
       >
-<h1 class="mb-2 mt-4 block text-lg font-bold text-text">2024 年度工作总结</h1>
-
-<h2 class="mb-1.5 mt-3 block text-[15px] font-semibold text-text">一、业务概况</h2>
-
-<p>2024 年公司整体业务保持稳定增长，全年营收达到 <strong>1,280 万元</strong>，同比增长 18.6%。</p>
-
-<h2 class="mb-1.5 mt-3 block text-[15px] font-semibold text-text">二、核心数据</h2>
-
-| 季度 | 营收（万元） | 同比增长 |
-|------|-------------|---------|
-| Q1   | 280         | +12.3%  |
-| Q2   | 315         | +15.7%  |
-| Q3   | 340         | +20.4%  |
-| Q4   | 345         | +25.1%  |
-
-<em class="my-3 block text-text-secondary">[图片: 营收趋势图]</em>
-
-<h2 class="mb-1.5 mt-3 block text-[15px] font-semibold text-text">三、重点项目</h2>
-
-<h3 class="mb-1 mt-2 text-[14px] font-semibold">3.1 平台升级</h3>
-
-<p>已完成核心系统从 v2 到 v3 的迁移。</p>
+        {{ preview.markdown_content }}
       </div>
     </section>
 
@@ -220,12 +239,16 @@ function setState(state: typeof currentState.value) {
         :icon="['far', 'circle-xmark']"
         class="mt-0.5 text-lg text-error"
       />
-      <div>
+      <div class="flex-1">
         <h4 class="mb-1 text-[14px] font-semibold">转换失败</h4>
-        <p class="text-[13px] text-text-secondary">
-          该 PDF 文件包含加密内容，无法解析。请确认文件未设置密码保护。
-        </p>
+        <p class="text-[13px] text-text-secondary">{{ errorMessage }}</p>
       </div>
+      <button
+        class="cursor-pointer rounded-lg border border-border bg-transparent px-3 py-1.5 font-inherit text-xs text-text-secondary transition-all duration-200 hover:border-[#999] hover:text-text"
+        @click="resetUpload"
+      >
+        重新上传
+      </button>
     </section>
 
     <footer class="mt-5 text-center text-[12px] text-text-tertiary">
