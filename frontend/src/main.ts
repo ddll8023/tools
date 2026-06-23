@@ -7,7 +7,8 @@ import {
   faBars, faCube, faFilePdf, faFileWord, faImage,
   faCode, faPlus, faArrowRight,
   faUpload, faDownload, faRotate, faMagnifyingGlass,
-  faSpinner, faTable, faArrowLeft
+  faSpinner, faTable, faArrowLeft,
+  faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
@@ -22,7 +23,8 @@ library.add(
   faUpload, faDownload, faRotate, faMagnifyingGlass,
   faFileLines, faClock, faFile, faCircleCheck,
   faCircleXmark, faHourglassHalf,
-  faCopy, faTable, faImageRegular, faSpinner, faArrowLeft
+  faCopy, faTable, faImageRegular, faSpinner, faArrowLeft,
+  faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark
 )
 
 import '@/style.css'

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
@@ -20,6 +20,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    frame: false,
     title: '工具盒子',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -27,6 +28,30 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false
     }
+  })
+
+  // 窗口控制 IPC
+  ipcMain.handle('window:minimize', () => {
+    mainWindow?.minimize()
+  })
+  ipcMain.handle('window:maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow?.maximize()
+    }
+  })
+  ipcMain.handle('window:close', () => {
+    mainWindow?.close()
+  })
+  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+
+  // 监听最大化状态变化通知渲染进程
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('window:maximize-changed', true)
+  })
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('window:maximize-changed', false)
   })
 
   if (isDev) {

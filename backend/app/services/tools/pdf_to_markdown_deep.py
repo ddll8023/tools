@@ -6,6 +6,7 @@ import uuid
 import subprocess
 import concurrent.futures
 import re
+import shutil
 
 from fastapi import UploadFile
 
@@ -17,6 +18,7 @@ from app.schemas.response import ErrorCode
 from app.schemas.tools.pdf_to_markdown import ConvertResponse, GetProgressResponse
 from app.services.tools.pdf_to_markdown_helpers import (
     TEMP_DIR,
+    UPLOADS_DIR,
     validate_task_id,
     write_status_atomic,
 )
@@ -42,10 +44,17 @@ def convert_pdf_deep(file: UploadFile):
         raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
 
     task_id = uuid.uuid4().hex[:12]
-    task_dir = os.path.join(TEMP_DIR, task_id)
+    task_dir = os.path.join(TEMP_DIR, "tasks", task_id)
     os.makedirs(task_dir, exist_ok=True)
+
+    # 保存原始 PDF 到 uploads/（带 task_id 前缀）
+    upload_filename = f"{task_id}-{file.filename}"
+    upload_path = os.path.join(UPLOADS_DIR, upload_filename)
+    save_file(file.file.read(), upload_path)
+
+    # 复制到任务目录
     pdf_path = os.path.join(task_dir, "input.pdf")
-    save_file(file.file.read(), pdf_path)
+    shutil.copy2(upload_path, pdf_path)
 
     write_status_atomic(task_dir, 0, "排队等待中...")
 
@@ -61,7 +70,7 @@ def get_progress_detail(task_id: str):
     if not validate_task_id(task_id):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
-    task_dir = os.path.join(TEMP_DIR, task_id)
+    task_dir = os.path.join(TEMP_DIR, "tasks", task_id)
     resolved = os.path.abspath(task_dir)
     if not resolved.startswith(os.path.abspath(TEMP_DIR)):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")

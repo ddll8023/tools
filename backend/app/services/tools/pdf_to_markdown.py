@@ -2,6 +2,7 @@
 
 import os
 import uuid
+import shutil
 
 import fitz
 from fastapi import UploadFile
@@ -14,6 +15,7 @@ from app.schemas.response import ErrorCode
 from app.schemas.tools.pdf_to_markdown import ConvertResponse
 from app.services.tools.pdf_to_markdown_helpers import (
     TEMP_DIR,
+    UPLOADS_DIR,
     get_preview_detail,
     download_md,
 )
@@ -32,11 +34,17 @@ def convert_pdf(file: UploadFile):
         raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
 
     task_id = uuid.uuid4().hex[:12]
-    task_dir = os.path.join(TEMP_DIR, task_id)
+    task_dir = os.path.join(TEMP_DIR, "tasks", task_id)
     os.makedirs(task_dir, exist_ok=True)
-    pdf_path = os.path.join(TEMP_DIR, file.filename)
 
-    save_file(file.file.read(), pdf_path)
+    # 保存原始 PDF 到 uploads/（带 task_id 前缀）
+    upload_filename = f"{task_id}-{file.filename}"
+    upload_path = os.path.join(UPLOADS_DIR, upload_filename)
+    save_file(file.file.read(), upload_path)
+
+    # 复制到任务目录
+    pdf_path = os.path.join(task_dir, "input.pdf")
+    shutil.copy2(upload_path, pdf_path)
 
     logger.info(f"开始转换 PDF: task_id={task_id} filename={file.filename}")
 
@@ -78,8 +86,9 @@ def convert_pdf(file: UploadFile):
             md_content.append("\n")
             headers = table.header.names if table.header else []
             if headers:
-                md_content.append("| " + " | ".join(headers) + " |")
-                md_content.append("| " + " | ".join(["---"] * len(headers)) + " |")
+                cleaned_headers = [str(h).replace("\n", " ") if h else "" for h in headers]
+                md_content.append("| " + " | ".join(cleaned_headers) + " |")
+                md_content.append("| " + " | ".join(["---"] * len(cleaned_headers)) + " |")
             for row in table.extract():
                 cleaned = [str(cell).replace("\n", " ") if cell else "" for cell in row]
                 md_content.append("| " + " | ".join(cleaned) + " |")

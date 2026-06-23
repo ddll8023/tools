@@ -6,8 +6,20 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
+import hljs from 'highlight.js'
 import { convertPdf, getPreview, getProgress, downloadMd } from '@/api/tools'
 import type { PreviewResponse } from '@/api/tools'
+
+// 配置 marked 语法高亮
+marked.use(markedHighlight({
+  emptyLangClass: 'hljs',
+  langPrefix: 'hljs language-',
+  highlight(code, lang) {
+    const language = hljs.getLanguage(lang) ? lang : 'plaintext'
+    return hljs.highlight(code, { language }).value
+  }
+}))
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 const POLL_INTERVAL = 1500
@@ -275,28 +287,37 @@ function resetUpload() {
   </main>
 </template>
 
-<style scoped>
+<style>
+/* highlight.js github-dark 主题 */
+@import 'highlight.js/styles/github-dark.css';
+
+/* ════════════════════════════════════════
+   Markdown 预览样式（全局，作用于 v-html 内容）
+   风格：浅色页面 + 深色代码块 + 品牌暖色点缀
+   ════════════════════════════════════════ */
+
+/* ── 标题系统 ── */
 .markdown-preview h1 {
   margin-bottom: 16px;
   font-size: 22px;
   font-weight: 700;
   line-height: 1.3;
   color: var(--color-text);
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: 8px;
+  border-bottom: 2px solid var(--color-primary-light);
+  padding-bottom: 10px;
 }
 .markdown-preview h2 {
-  margin-top: 28px;
+  margin-top: 30px;
   margin-bottom: 12px;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 650;
   line-height: 1.35;
   color: var(--color-text);
   border-bottom: 1px solid var(--color-border);
-  padding-bottom: 6px;
+  padding-bottom: 7px;
 }
 .markdown-preview h3 {
-  margin-top: 22px;
+  margin-top: 24px;
   margin-bottom: 10px;
   font-size: 16px;
   font-weight: 600;
@@ -304,86 +325,124 @@ function resetUpload() {
   color: var(--color-text);
 }
 .markdown-preview h4 {
-  margin-top: 18px;
+  margin-top: 20px;
   margin-bottom: 8px;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
+
+/* ── 正文 ── */
 .markdown-preview p {
   margin-bottom: 14px;
   font-size: 14px;
-  line-height: 1.75;
+  line-height: 1.8;
   color: var(--color-text);
 }
+
+/* ── 列表 ── */
 .markdown-preview ul,
 .markdown-preview ol {
   margin-bottom: 14px;
   padding-left: 22px;
   font-size: 14px;
-  line-height: 1.75;
+  line-height: 1.8;
   color: var(--color-text);
 }
 .markdown-preview ul {
   list-style-type: disc;
 }
+.markdown-preview ul ul {
+  list-style-type: circle;
+}
 .markdown-preview ol {
   list-style-type: decimal;
 }
 .markdown-preview li {
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 .markdown-preview li > ul,
 .markdown-preview li > ol {
   margin-bottom: 0;
 }
+
+/* ── 行内代码 ── */
 .markdown-preview code {
-  padding: 2px 6px;
+  padding: 2px 7px;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
   font-size: 12.5px;
   background-color: var(--color-hover);
-  border-radius: 4px;
-  color: #e74c3c;
+  border: 1px solid #E8E8E4;
+  border-radius: 5px;
+  color: #C7254E;
 }
+
+/* ── 代码块（深色主题 + 阴影） ── */
 .markdown-preview pre {
   margin-bottom: 16px;
-  padding: 16px;
+  padding: 18px;
   overflow-x: auto;
-  background-color: #1e1e1e;
-  border-radius: 8px;
-  line-height: 1.55;
+  background-color: #1E1E1E;
+  border: 1px solid #333;
+  border-radius: 10px;
+  line-height: 1.6;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
 }
 .markdown-preview pre code {
   padding: 0;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
   font-size: 12.5px;
   background: none;
+  border: none;
   border-radius: 0;
-  color: #d4d4d4;
+  color: #D4D4D4;
 }
+
+/* ── 引用块 ── */
 .markdown-preview blockquote {
-  margin-bottom: 14px;
-  padding: 10px 16px;
-  border-left: 3px solid var(--color-primary);
-  background-color: var(--color-primary-light);
-  border-radius: 0 6px 6px 0;
+  margin-bottom: 16px;
+  padding: 16px 20px;
+  border-left: 4px solid var(--color-primary);
+  background: linear-gradient(to right, var(--color-primary-light) 0%, #FEFCF8 100%);
+  border-radius: 0 10px 10px 0;
   font-size: 14px;
-  line-height: 1.7;
+  line-height: 1.75;
   color: var(--color-text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
 }
+.markdown-preview blockquote p {
+  margin-bottom: 0;
+}
+.markdown-preview blockquote p + p {
+  margin-top: 10px;
+}
+
+/* ── 表格 ── */
 .markdown-preview table {
   margin-bottom: 16px;
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 13px;
   line-height: 1.6;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
 }
 .markdown-preview th,
 .markdown-preview td {
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
   text-align: left;
+}
+.markdown-preview th:last-child,
+.markdown-preview td:last-child {
+  border-right: none;
+}
+.markdown-preview tr:last-child td {
+  border-bottom: none;
 }
 .markdown-preview th {
   background-color: var(--color-hover);
@@ -396,33 +455,69 @@ function resetUpload() {
 .markdown-preview tr:nth-child(even) td {
   background-color: var(--color-bg);
 }
-.markdown-preview hr {
-  margin: 20px 0;
-  border: none;
-  border-top: 1px solid var(--color-border);
+.markdown-preview tr:hover td {
+  background-color: var(--color-primary-light);
 }
+
+/* ── 分割线 ── */
+.markdown-preview hr {
+  margin: 24px 0;
+  border: none;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--color-border), transparent);
+}
+
+/* ── 链接 ── */
 .markdown-preview a {
-  color: var(--color-primary);
+  color: var(--color-primary-dark);
   text-decoration: underline;
-  text-underline-offset: 2px;
-  transition: opacity 0.2s;
+  text-decoration-color: var(--color-primary-light);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  transition: all 0.2s;
 }
 .markdown-preview a:hover {
-  opacity: 0.8;
+  text-decoration-color: var(--color-primary);
 }
+
+/* ── 粗体/斜体 ── */
 .markdown-preview strong {
   font-weight: 650;
 }
+.markdown-preview em {
+  font-style: italic;
+}
+
+/* ── 图片 ── */
 .markdown-preview img {
   max-width: 100%;
   height: auto;
-  border-radius: 6px;
-  margin: 8px 0;
+  border-radius: 8px;
+  margin: 12px 0;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
+
+/* ── 首尾元素间距清除 ── */
 .markdown-preview > :first-child {
   margin-top: 0;
 }
 .markdown-preview > :last-child {
   margin-bottom: 0;
+}
+
+/* ── 预览容器自定义滚动条 ── */
+.markdown-preview::-webkit-scrollbar {
+  width: 6px;
+}
+.markdown-preview::-webkit-scrollbar-track {
+  background: transparent;
+}
+.markdown-preview::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+.markdown-preview::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
 }
 </style>
