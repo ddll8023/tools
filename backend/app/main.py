@@ -1,0 +1,31 @@
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from app.api.v1.health import router as health_router
+from app.api.v1.tools import router as tools_router
+from app.schemas.response import ErrorCode
+from app.utils.logger_config import setup_logger
+from app.utils.exception import ServiceException
+
+logger = setup_logger(__name__)
+
+app = FastAPI(title="工具盒子", version="0.1.0")
+
+app.include_router(health_router)
+app.include_router(tools_router)
+
+
+@app.exception_handler(ServiceException)
+async def service_exception_handler(request: Request, exc: ServiceException):
+    return JSONResponse(
+        status_code=200,
+        content={"code": exc.code, "message": exc.message, "data": None},
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"全局异常: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=200,
+        content={"code": ErrorCode.INTERNAL_ERROR, "message": "系统内部错误", "data": None},
+    )

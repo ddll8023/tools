@@ -1,0 +1,12 @@
+node_modules/
+dist/
+electron/*.js
+electron/*.js.map
+!electron/dev-runner.js
+playwright-report/
+test-results/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+

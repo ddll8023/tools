@@ -1,0 +1,553 @@
+<!--
+  页面名称：首页 - 工具网格
+  所属模块：工具盒子 - 首页
+  创建日期：2026-06-22
+  描述：顶部栏 + 可收起侧边栏 + 工具网格卡片，侧边栏默认隐藏
+-->
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>工具盒子</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-primary: #F5A623;
+      --color-primary-light: #FDEBD0;
+      --color-primary-dark: #D4890A;
+      --color-bg: #FAFAF8;
+      --color-surface: #FFFFFF;
+      --color-text: #2D2D2D;
+      --color-text-secondary: #999999;
+      --color-text-tertiary: #BBBBBB;
+      --color-border: #EBEBE7;
+      --color-hover: #F5F5F2;
+      --color-success: #52C41A;
+      --color-error: #FF4D4F;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 14px rgba(0,0,0,0.06);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.08);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --topbar-height: 52px;
+      --sidebar-width: 220px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--color-bg);
+      color: var(--color-text);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Top Bar ── */
+    .topbar {
+      height: var(--topbar-height);
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      position: relative;
+      z-index: 30;
+    }
+
+    .topbar .hamburger {
+      width: 36px;
+      height: 36px;
+      border: none;
+      background: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-text-secondary);
+      font-size: 18px;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .topbar .hamburger:hover {
+      background: var(--color-hover);
+      color: var(--color-text);
+    }
+
+    .topbar .brand {
+      font-size: 15px;
+      font-weight: 600;
+      margin-left: 10px;
+      flex-shrink: 0;
+    }
+
+    .topbar .current-tool {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 13px;
+      color: var(--color-text-secondary);
+      font-weight: 500;
+    }
+
+    .topbar .search-box {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 20px;
+      padding: 0 12px;
+      height: 32px;
+      width: 180px;
+      transition: all 0.2s;
+    }
+
+    .topbar .search-box:focus-within {
+      border-color: var(--color-primary);
+      background: var(--color-surface);
+      width: 220px;
+    }
+
+    .topbar .search-box i {
+      color: var(--color-text-tertiary);
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .topbar .search-box input {
+      border: none;
+      background: none;
+      outline: none;
+      font-size: 13px;
+      color: var(--color-text);
+      width: 100%;
+      padding: 0 8px;
+      font-family: inherit;
+    }
+
+    .topbar .search-box input::placeholder {
+      color: var(--color-text-tertiary);
+    }
+
+    /* ── Body ── */
+    .body-wrap {
+      display: flex;
+      height: calc(100vh - var(--topbar-height));
+      position: relative;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--color-surface);
+      border-right: 1px solid var(--color-border);
+      flex-shrink: 0;
+      overflow-y: auto;
+      transition: margin-left 0.25s ease, opacity 0.2s ease;
+      padding: 12px 10px;
+      z-index: 20;
+    }
+
+    .sidebar.collapsed {
+      margin-left: calc(-1 * var(--sidebar-width));
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .sidebar .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--color-text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 8px 12px 6px;
+    }
+
+    .sidebar .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--color-text-secondary);
+      transition: all 0.15s;
+      text-decoration: none;
+    }
+
+    .sidebar .nav-item:hover {
+      background: var(--color-hover);
+      color: var(--color-text);
+    }
+
+    .sidebar .nav-item.active {
+      background: var(--color-primary-light);
+      color: var(--color-primary-dark);
+    }
+
+    .sidebar .nav-item .nav-icon {
+      width: 24px;
+      text-align: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .sidebar .nav-item.coming {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    .sidebar .nav-item.coming:hover {
+      background: none;
+      color: var(--color-text-secondary);
+    }
+
+    .sidebar .nav-divider {
+      height: 1px;
+      background: var(--color-border);
+      margin: 8px 12px;
+    }
+
+    /* ── Content ── */
+    .content {
+      flex: 1;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 40px 0;
+      overflow-y: auto;
+      width: 100%;
+    }
+
+    /* ── Home Grid ── */
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .header-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 52px;
+      height: 52px;
+      background: var(--color-primary-light);
+      border-radius: var(--radius-md);
+      margin-bottom: 14px;
+    }
+
+    .header-logo i {
+      font-size: 24px;
+      color: var(--color-primary-dark);
+    }
+
+    .header h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      font-size: 14px;
+      color: var(--color-text-secondary);
+    }
+
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .tool-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 28px 24px 24px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      position: relative;
+    }
+
+    .tool-card:hover {
+      border-color: transparent;
+      box-shadow: var(--shadow-lg);
+      transform: translateY(-3px);
+    }
+
+    .tool-card:active {
+      transform: translateY(0);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tool-card .icon-wrap {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 20px;
+    }
+
+    .tool-card .icon-wrap.active {
+      background: var(--color-primary-light);
+      color: var(--color-primary-dark);
+    }
+
+    .tool-card .icon-wrap.placeholder {
+      background: #F2F2F0;
+      color: var(--color-text-tertiary);
+    }
+
+    .tool-card h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .tool-card p {
+      font-size: 13px;
+      color: var(--color-text-secondary);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .tool-card .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .tool-card .badge {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    .tool-card .badge.ready {
+      background: #F0F5E9;
+      color: #4A8B2F;
+    }
+
+    .tool-card .badge.coming {
+      background: #F2F2F0;
+      color: var(--color-text-tertiary);
+    }
+
+    .tool-card .arrow {
+      font-size: 14px;
+      color: var(--color-text-tertiary);
+      transition: all 0.2s ease;
+    }
+
+    .tool-card:hover .arrow {
+      color: var(--color-primary);
+      transform: translateX(3px);
+    }
+
+    .tool-card.coming-soon {
+      cursor: default;
+      opacity: 0.7;
+    }
+
+    .tool-card.coming-soon:hover {
+      transform: none;
+      box-shadow: none;
+      border-color: var(--color-border);
+    }
+
+    .footer-note {
+      text-align: center;
+      margin-top: 40px;
+      font-size: 12px;
+      color: var(--color-text-tertiary);
+    }
+
+    .footer-note span {
+      display: inline-block;
+      margin: 0 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <div class="topbar">
+    <!-- 点击切换侧边栏 -->
+    <button class="hamburger" id="menuToggle">
+      <i class="fa-solid fa-bars"></i>
+    </button>
+    <span class="brand">工具盒子</span>
+    <span class="current-tool"></span>
+    <div class="search-box">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="text" placeholder="搜索工具..." readonly>
+    </div>
+  </div>
+
+  <div class="body-wrap">
+
+    <!-- Sidebar（默认隐藏） -->
+    <div class="sidebar collapsed" id="sidebar">
+      <div class="section-label">工具列表</div>
+      <!-- 当前页，active 高亮 -->
+      <a class="nav-item active" href="index.html">
+        <span class="nav-icon"><i class="fa-solid fa-cube"></i></span>
+        <span>首页</span>
+      </a>
+      <div class="nav-divider"></div>
+      <!-- 可用工具，点击跳转到工具页 -->
+      <a class="nav-item" href="pdf-to-markdown.html">
+        <span class="nav-icon"><i class="fa-solid fa-file-pdf"></i></span>
+        <span>PDF 转 Markdown</span>
+      </a>
+      <!-- 即将上线 -->
+      <span class="nav-item coming">
+        <span class="nav-icon"><i class="fa-solid fa-file-word"></i></span>
+        <span>DOCX 转 PDF</span>
+      </span>
+      <span class="nav-item coming">
+        <span class="nav-icon"><i class="fa-solid fa-image"></i></span>
+        <span>图片压缩</span>
+      </span>
+      <span class="nav-item coming">
+        <span class="nav-icon"><i class="fa-solid fa-brackets-curly"></i></span>
+        <span>JSON 格式化</span>
+      </span>
+      <span class="nav-item coming">
+        <span class="nav-icon"><i class="fa-solid fa-code"></i></span>
+        <span>正则测试器</span>
+      </span>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+
+      <div class="header">
+        <div class="header-logo">
+          <i class="fa-solid fa-cube"></i>
+        </div>
+        <h1>工具盒子</h1>
+        <p>轻量文档处理工具集，所有操作在本地完成</p>
+      </div>
+
+      <div class="tool-grid">
+
+        <!-- PDF → Markdown -->
+        <div class="tool-card" onclick="location.href='pdf-to-markdown.html'">
+          <div class="icon-wrap active">
+            <i class="fa-solid fa-file-pdf"></i>
+          </div>
+          <h3>PDF 转 Markdown</h3>
+          <p>将 PDF 文件转换为 Markdown 格式，保留文本、表格与图片</p>
+          <div class="card-footer">
+            <span class="badge ready">已就绪</span>
+            <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+          </div>
+        </div>
+
+        <!-- DOCX → PDF -->
+        <div class="tool-card coming-soon">
+          <div class="icon-wrap placeholder">
+            <i class="fa-solid fa-file-word"></i>
+          </div>
+          <h3>DOCX 转 PDF</h3>
+          <p>将 Word 文档转换为 PDF 格式，保持排版与样式</p>
+          <div class="card-footer">
+            <span class="badge coming">即将上线</span>
+            <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+          </div>
+        </div>
+
+        <!-- 图片压缩 -->
+        <div class="tool-card coming-soon">
+          <div class="icon-wrap placeholder">
+            <i class="fa-solid fa-image"></i>
+          </div>
+          <h3>图片压缩</h3>
+          <p>压缩 PNG / JPG 图片，自定义输出质量与尺寸</p>
+          <div class="card-footer">
+            <span class="badge coming">即将上线</span>
+            <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+          </div>
+        </div>
+
+        <!-- JSON 格式化 -->
+        <div class="tool-card coming-soon">
+          <div class="icon-wrap placeholder">
+            <i class="fa-solid fa-brackets-curly"></i>
+          </div>
+          <h3>JSON 格式化</h3>
+          <p>格式化 / 压缩 JSON 数据，支持校验与树形浏览</p>
+          <div class="card-footer">
+            <span class="badge coming">即将上线</span>
+            <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+          </div>
+        </div>
+
+        <!-- 正则测试器 -->
+        <div class="tool-card coming-soon">
+          <div class="icon-wrap placeholder">
+            <i class="fa-solid fa-code"></i>
+          </div>
+          <h3>正则测试器</h3>
+          <p>在线编写与测试正则表达式，实时匹配高亮</p>
+          <div class="card-footer">
+            <span class="badge coming">即将上线</span>
+            <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+          </div>
+        </div>
+
+        <!-- 更多工具 -->
+        <div class="tool-card coming-soon">
+          <div class="icon-wrap placeholder">
+            <i class="fa-solid fa-plus"></i>
+          </div>
+          <h3>更多工具</h3>
+          <p>更多便捷工具持续开发中，敬请期待</p>
+          <div class="card-footer">
+            <span class="badge coming">即将上线</span>
+            <span class="arrow"><i class="fa-solid fa-arrow-right"></i></span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="footer-note">
+        <span><i class="fa-regular fa-clock"></i> 本地处理，文件不会上传</span>
+        <span><i class="fa-regular fa-file-lines"></i> v0.1.0</span>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.getElementById('menuToggle');
+
+    toggle.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
+    });
+  </script>
+
+  <!--
+    目标分辨率：1200 × 800
+    适配说明：侧边栏固定宽度 220px，内容区自适应
+  -->
+</body>
+</html>
