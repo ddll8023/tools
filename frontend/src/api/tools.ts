@@ -25,6 +25,29 @@ export interface GetProgressResponse {
   stage: string
 }
 
+export interface ToolItem {
+  id: string
+  name: string
+  path: string
+  display_name: string
+  description: string
+  icon: string
+}
+
+export async function fetchToolList(): Promise<ToolItem[]> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/list`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const json: ApiResponse<{ tools: ToolItem[] }> = await res.json()
+
+  if (json.code !== 0) {
+    throw new Error(json.message || '获取工具列表失败')
+  }
+
+  return json.data?.tools ?? []
+}
+
 export async function convertPdf(file: File, deepParse = false): Promise<ConvertResponse> {
   const formData = new FormData()
   formData.append('file', file)

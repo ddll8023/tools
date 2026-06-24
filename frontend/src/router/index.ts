@@ -1,37 +1,39 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
-import { generateToolRoutes } from '@/router/tools'
+import { initToolConfigs, generateToolRoutes } from '@/router/tools'
 
-const routes: RouteRecordRaw[] = [
-  {
-    path: '/',
-    component: () => import('@/components/layout/AppShell.vue'),
-    children: [
-      {
-        path: '',
-        name: 'Home',
-        component: () => import('@/views/home/index.vue'),
-        meta: {
-          title: '工具盒子',
-          sidebarDefaultCollapsed: true
-        }
-      },
-      {
-        path: 'tools',
-        children: generateToolRoutes()
-      }
-    ]
-  },
-  {
-    path: '/:pathMatch(.*)*',
-    name: 'NotFound',
-    component: () => import('@/views/error/404.vue')
-  }
-]
+export async function createAppRouter() {
+  const configs = await initToolConfigs()
 
-const router = createRouter({
-  history: createWebHashHistory(),
-  routes
-})
+  const routes: RouteRecordRaw[] = [
+    {
+      path: '/',
+      component: () => import('@/components/layout/AppShell.vue'),
+      children: [
+        {
+          path: '',
+          name: 'Home',
+          component: () => import('@/views/home/index.vue'),
+          meta: {
+            title: '工具盒子',
+            sidebarDefaultCollapsed: true,
+          },
+        },
+        {
+          path: 'tools',
+          children: generateToolRoutes(configs),
+        },
+      ],
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'NotFound',
+      component: () => import('@/views/error/404.vue'),
+    },
+  ]
 
-export default router
+  return createRouter({
+    history: createWebHashHistory(),
+    routes,
+  })
+}
