@@ -8,7 +8,7 @@ import { ref, computed } from 'vue'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
-import { convertPdf, getPreview, getProgress, downloadMd } from '@/api/tools'
+import { convertPdf, getPreview, getProgress } from '@/api/tools'
 import type { PreviewResponse } from '@/api/tools'
 
 // 配置 marked 语法高亮
@@ -25,6 +25,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024
 const POLL_INTERVAL = 1500
 
 type PageState = 'upload' | 'progress' | 'result' | 'error'
+type ViewMode = 'split' | 'preview'
 
 const currentState = ref<PageState>('upload')
 const errorMessage = ref('')
@@ -35,10 +36,61 @@ const deepParse = ref(false)
 const progressValue = ref(0)
 const progressStage = ref('')
 
+/* ── 双栏编辑相关 ── */
+const viewMode = ref<ViewMode>('split')
+const editingMarkdown = ref('')
+
+/* ── 元素引用 ── */
+const leftEditorRef = ref<HTMLTextAreaElement | null>(null)
+const rightPreviewRef = ref<HTMLElement | null>(null)
+
+/* 双栏模式下容器宽度自适应：宽屏 1400px，单栏/其他保持 860px */
+const isWideMode = computed(() => currentState.value === 'result' && viewMode.value === 'split')
+
+/*
+ * renderedMarkdown 计算属性
+ * 依赖 editingMarkdown，编辑时实时重渲染
+ */
 const renderedMarkdown = computed(() => {
-  if (!preview.value) return ''
-  return marked.parse(preview.value.markdown_content)
+  if (!editingMarkdown.value) return ''
+  return marked.parse(editingMarkdown.value)
 })
+
+/* ════════════════════════════════════════
+   同步滚动 — 连续比例跟随
+   ════════════════════════════════════════ */
+
+let isSyncing = false
+let lastSyncRatio = -1
+
+function syncScroll(source: HTMLElement, target: HTMLElement) {
+  const ratio = source.scrollTop / Math.max(1, source.scrollHeight - source.clientHeight)
+  if (Math.abs(ratio - lastSyncRatio) < 0.005) return
+  lastSyncRatio = ratio
+  target.scrollTop = ratio * Math.max(1, target.scrollHeight - target.clientHeight)
+}
+
+function onLeftScroll() {
+  if (isSyncing || viewMode.value === 'preview') return
+  isSyncing = true
+  requestAnimationFrame(() => {
+    const left = leftEditorRef.value
+    const right = rightPreviewRef.value
+    if (left && right) syncScroll(left, right)
+    isSyncing = false
+  })
+}
+
+function onRightScroll() {
+  if (isSyncing || viewMode.value === 'preview') return
+  isSyncing = true
+  requestAnimationFrame(() => {
+    const left = leftEditorRef.value
+    const right = rightPreviewRef.value
+    if (left && right) syncScroll(right, left)
+    isSyncing = false
+  })
+}
 
 function validateFile(file: File): string | null {
   if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -88,11 +140,13 @@ async function handleFile(file: File) {
       await pollProgress(result.task_id)
       const data = await getPreview(result.task_id)
       preview.value = data
+      editingMarkdown.value = data.markdown_content
       currentState.value = 'result'
     } else {
       currentTaskId.value = result.task_id
       const data = await getPreview(result.task_id)
       preview.value = data
+      editingMarkdown.value = data.markdown_content
       currentState.value = 'result'
     }
   } catch (e: any) {
@@ -121,14 +175,20 @@ async function pollProgress(taskId: string) {
   }
 }
 
+/**
+ * 下载编辑后的 Markdown 内容（前端 Blob 下载）
+ */
 async function handleDownload() {
-  if (!currentTaskId.value) return
-  try {
-    await downloadMd(currentTaskId.value)
-  } catch (e: any) {
-    errorMessage.value = e.message || '下载失败'
-    currentState.value = 'error'
-  }
+  if (!editingMarkdown.value) return
+  const blob = new Blob([editingMarkdown.value], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = (selectedFile.value?.name || 'output').replace(/\.pdf$/i, '.md')
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 function resetUpload() {
@@ -140,11 +200,12 @@ function resetUpload() {
   deepParse.value = false
   progressValue.value = 0
   progressStage.value = ''
+  editingMarkdown.value = ''
 }
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-[860px] py-7">
+  <main class="mx-auto w-full py-7" :style="{ maxWidth: isWideMode ? '1400px' : '860px' }">
     <section class="mb-5 rounded-2xl border border-border bg-surface p-8">
       <div class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
         <font-awesome-icon :icon="['far', 'file']" class="mr-1.5" />
@@ -230,9 +291,24 @@ function resetUpload() {
 
     <!-- 结果 -->
     <section v-if="currentState === 'result' && preview" class="mb-5 rounded-2xl border border-border bg-surface p-8">
-      <div class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
-        <font-awesome-icon :icon="['far', 'file-lines']" class="mr-1.5" />
-        转换结果
+      <div class="mb-[18px] flex items-center justify-between">
+        <div class="text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
+          <font-awesome-icon :icon="['far', 'file-lines']" class="mr-1.5" />
+          转换结果
+        </div>
+        <!-- 双栏/单栏切换 -->
+        <div class="flex overflow-hidden rounded-lg border border-border text-[12px]">
+          <button
+            class="cursor-pointer px-3 py-1.5 font-inherit transition-all"
+            :class="viewMode === 'split' ? 'bg-primary text-white' : 'bg-surface text-text-secondary hover:bg-hover'"
+            @click="viewMode = 'split'"
+          >双栏</button>
+          <button
+            class="cursor-pointer border-l border-border px-3 py-1.5 font-inherit transition-all"
+            :class="viewMode === 'preview' ? 'bg-primary text-white' : 'bg-surface text-text-secondary hover:bg-hover'"
+            @click="viewMode = 'preview'"
+          >预览</button>
+        </div>
       </div>
 
       <div class="mb-[18px] flex flex-wrap gap-2.5">
@@ -260,8 +336,32 @@ function resetUpload() {
         </div>
       </div>
 
-      <div class="markdown-preview max-h-[560px] overflow-y-auto rounded-lg border border-border bg-surface p-6">
-        <div v-html="renderedMarkdown" class="max-w-none"></div>
+      <!-- 双栏预览容器 -->
+      <div class="flex overflow-hidden rounded-lg border border-border">
+        <!-- 左栏：Markdown 原文编辑 -->
+        <div
+          v-show="viewMode === 'split'"
+          class="w-1/2 border-r border-border"
+        >
+          <textarea
+            ref="leftEditorRef"
+            v-model="editingMarkdown"
+            class="markdown-editor block h-[560px] w-full resize-none border-0 bg-[#F9F9F6] p-6 font-mono text-[14px] leading-relaxed text-text outline-none"
+            @scroll="onLeftScroll"
+            spellcheck="false"
+          ></textarea>
+        </div>
+        <!-- 右栏：渲染预览 -->
+        <div
+          ref="rightPreviewRef"
+          class="markdown-preview h-[560px] overflow-y-auto"
+          :class="viewMode === 'split' ? 'w-1/2' : 'w-full'"
+          @scroll="onRightScroll"
+        >
+          <div class="p-6">
+            <div v-html="renderedMarkdown" class="max-w-none"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -519,5 +619,34 @@ function resetUpload() {
 }
 .markdown-preview::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-tertiary);
+}
+
+/* ════════════════════════════════════════
+   Markdown 编辑区样式
+   ════════════════════════════════════════ */
+
+/* ── 编辑区默认滚动条 ── */
+.markdown-editor::-webkit-scrollbar {
+  width: 6px;
+}
+.markdown-editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+.markdown-editor::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+.markdown-editor::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* ── 编辑区占位符 ── */
+.markdown-editor::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ── 编辑区选中文本 ── */
+.markdown-editor::selection {
+  background: var(--color-primary-light);
 }
 </style>
