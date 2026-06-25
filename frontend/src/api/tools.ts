@@ -10,7 +10,7 @@ const API_BASE = 'http://127.0.0.1:4740'
 export interface ConvertResponse {
   task_id: string
   filename: string
-  page_count: number
+  page_count?: number
 }
 
 export interface PreviewResponse {
@@ -32,6 +32,7 @@ export interface ToolItem {
   display_name: string
   description: string
   icon: string
+  available: boolean
 }
 
 export async function fetchToolList(): Promise<ToolItem[]> {
@@ -113,6 +114,54 @@ export async function downloadMd(taskId: string): Promise<void> {
 
   const disposition = res.headers.get('content-disposition')
   const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}.md`
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+
+  URL.revokeObjectURL(url)
+}
+
+/* ════════════════════════════════════════
+   Word 转 PDF API
+   ════════════════════════════════════════ */
+
+export async function convertWord(file: File): Promise<ConvertResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/word-to-pdf/convert`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  const json: ApiResponse<ConvertResponse> = await res.json()
+
+  if (json.code !== 0) {
+    throw new Error(json.message || '转换失败')
+  }
+
+  return json.data as ConvertResponse
+}
+
+export async function downloadPdf(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/word-to-pdf/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+
+  if (!res.ok) {
+    const json = await res.json()
+    throw new Error(json.message || '下载失败')
+  }
+
+  const disposition = res.headers.get('content-disposition')
+  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}.pdf`
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)

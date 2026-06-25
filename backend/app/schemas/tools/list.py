@@ -13,6 +13,7 @@ class ToolListItem(BaseModel):
     display_name: str = Field(..., description="前端显示名称")
     description: str = Field(..., description="工具功能描述")
     icon: str = Field(..., description="图标类名，格式如 fas fa-file-pdf")
+    available: bool = Field(True, description="工具当前是否可用")
 
 
 class GetToolListResponse(BaseModel):

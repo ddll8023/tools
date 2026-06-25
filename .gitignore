@@ -11,4 +11,5 @@ __pycache__/
 *.egg-info/
 temp/
 数据
-models/mineru/
+resources
+.env

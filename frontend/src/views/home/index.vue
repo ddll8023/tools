@@ -9,8 +9,9 @@ import { toolConfigs } from '@/router/tools'
 
 const router = useRouter()
 
-function navigateTo(path: string) {
-  router.push(path)
+function navigateTo(tool: { path: string; available?: boolean }) {
+  if (tool.available === false) return
+  router.push('/tools/' + tool.path)
 }
 </script>
 
@@ -38,8 +39,11 @@ function navigateTo(path: string) {
         <article
           v-for="tool in toolConfigs"
           :key="tool.id"
-          class="flex w-full flex-col rounded-2xl border border-border bg-surface p-7 pb-6 cursor-pointer transition-all duration-250 hover:-translate-y-[3px] hover:border-transparent hover:shadow-lg active:translate-y-0 active:shadow-sm"
-          @click="navigateTo('/tools/' + tool.path)"
+          class="flex w-full flex-col rounded-2xl border border-border bg-surface p-7 pb-6 transition-all duration-250"
+          :class="tool.available === false
+            ? 'cursor-default opacity-50 grayscale'
+            : 'cursor-pointer hover:-translate-y-[3px] hover:border-transparent hover:shadow-lg active:translate-y-0 active:shadow-sm'"
+          @click="navigateTo(tool)"
         >
           <div
             class="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-primary-light text-xl text-primary-dark"
@@ -54,9 +58,16 @@ function navigateTo(path: string) {
           </p>
           <div class="mt-auto flex items-center justify-between">
             <span
+              v-if="tool.available !== false"
               class="rounded-full bg-[#F0F5E9] px-2.5 py-0.5 text-[11px] font-medium text-[#4A8B2F]"
             >
               已就绪
+            </span>
+            <span
+              v-else
+              class="rounded-full bg-[#FFF0E0] px-2.5 py-0.5 text-[11px] font-medium text-[#B8860B]"
+            >
+              需安装 LibreOffice
             </span>
             <span
               class="text-sm text-text-tertiary transition-all duration-200"

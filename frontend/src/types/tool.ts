@@ -7,6 +7,7 @@ export interface ToolConfig {
   icon: string[]
   component: () => Promise<{ default: any }>
   sidebarDefaultCollapsed?: boolean
+  available?: boolean
 }
 
 export interface ApiResponse<T> {

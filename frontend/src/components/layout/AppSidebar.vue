@@ -15,6 +15,10 @@ const layoutStore = useLayoutStore()
 function navigateTo(path: string) {
   router.push(path)
 }
+
+function canNavigate(tool: { available?: boolean }): boolean {
+  return tool.available !== false
+}
 </script>
 
 <template>
@@ -45,9 +49,11 @@ function navigateTo(path: string) {
       <a
         v-for="tool in toolConfigs"
         :key="tool.id"
-        class="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium no-underline cursor-pointer transition-all duration-150 hover:bg-hover hover:text-text"
-        :class="{ '!bg-primary-light !text-primary-dark': route.path === '/tools/' + tool.path }"
-        @click="navigateTo('/tools/' + tool.path)"
+        class="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium no-underline transition-all duration-150"
+        :class="!canNavigate(tool)
+          ? 'cursor-default text-text-tertiary'
+          : 'cursor-pointer hover:bg-hover hover:text-text ' + (route.path === '/tools/' + tool.path ? '!bg-primary-light !text-primary-dark' : '')"
+        @click="canNavigate(tool) && navigateTo('/tools/' + tool.path)"
       >
         <span class="flex-shrink-0 w-6 text-center text-[15px]">
           <font-awesome-icon :icon="tool.icon" />

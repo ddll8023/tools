@@ -11,6 +11,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'file-pdf'],
     component: () => import('@/views/tools/PdfToMarkdown.vue'),
   },
+  'word-to-pdf': {
+    icon: ['fas', 'file-word'],
+    component: () => import('@/views/tools/WordToPdf.vue'),
+  },
 }
 
 /** 从后端获取工具列表并与本地注册表合并 */
@@ -29,6 +33,7 @@ export async function initToolConfigs(): Promise<ToolConfig[]> {
         icon: local?.icon ?? (remote.icon as string).split(' ') as unknown as string[],
         component: local?.component ?? (() => Promise.reject(new Error(`未知工具: ${remote.id}`))),
         sidebarDefaultCollapsed: false,
+        available: remote.available,
       }
     })
 
