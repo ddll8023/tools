@@ -35,10 +35,10 @@ def download_pdf(body: DownloadRequest):
     """下载 PDF 文件"""
     logger.info(f"API 下载请求: task_id={body.task_id}")
     try:
-        file_path = services_word_to_pdf.download_pdf(body.task_id)
+        file_path, original_filename = services_word_to_pdf.download_pdf(body.task_id)
         return FileResponse(
             path=file_path,
-            filename=f"{body.task_id}.pdf",
+            filename=original_filename,
             media_type="application/pdf",
         )
     except ServiceException as e:

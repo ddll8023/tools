@@ -1,6 +1,8 @@
 """Word 转 PDF 服务"""
 
 import os
+import re
+import json
 import uuid
 import subprocess
 
@@ -21,6 +23,11 @@ CONVERT_TIMEOUT = 120
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 SUPPORTED_EXTENSIONS = (".docx", ".doc")
+
+# Windows 下隐藏 LibreOffice 启动时弹出的终端窗口
+_POPEN_KWARGS = {}
+if os.name == "nt":
+    _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 
 def convert_word(file: UploadFile) -> ConvertResponse:
@@ -55,6 +62,7 @@ def convert_word(file: UploadFile) -> ConvertResponse:
             [
                 LIBREOFFICE_PATH,
                 "--headless",
+                "--norestore",
                 "--convert-to", "pdf",
                 "--outdir", task_dir,
                 input_path,
@@ -62,6 +70,7 @@ def convert_word(file: UploadFile) -> ConvertResponse:
             check=True,
             capture_output=True,
             timeout=CONVERT_TIMEOUT,
+            **_POPEN_KWARGS,
         )
     except FileNotFoundError:
         raise ServiceException(
@@ -86,12 +95,18 @@ def convert_word(file: UploadFile) -> ConvertResponse:
             "转换未生成输出文件",
         )
 
+    # 保存原始文件名供下载时使用
+    meta = {"original_filename": file.filename}
+    meta_path = os.path.join(task_dir, "meta.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+
     logger.info(f"Word 转换完成: task_id={task_id} filename={file.filename}")
     return ConvertResponse(task_id=task_id, filename=file.filename)
 
 
-def download_pdf(task_id: str) -> str:
-    """获取 PDF 文件下载路径"""
+def download_pdf(task_id: str) -> tuple:
+    """获取 PDF 文件下载路径及原始文件名"""
     logger.info(f"下载文件: task_id={task_id}")
     if not validate_task_id(task_id):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
@@ -105,5 +120,19 @@ def download_pdf(task_id: str) -> str:
     if not os.path.exists(pdf_path):
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在")
 
-    logger.info(f"文件下载返回: task_id={task_id}")
-    return pdf_path
+    # 读取原始文件名，若无则回退到 task_id
+    original_filename = f"{task_id}.pdf"
+    meta_path = os.path.join(task_dir, "meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            raw = meta.get("original_filename", "")
+            if raw:
+                pdf_name = re.sub(r"\.(docx?)$", ".pdf", raw, flags=re.IGNORECASE)
+                original_filename = pdf_name
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    logger.info(f"文件下载返回: task_id={task_id} filename={original_filename}")
+    return pdf_path, original_filename
