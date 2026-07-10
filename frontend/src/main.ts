@@ -8,13 +8,14 @@ import {
   faCode, faPlus, faArrowRight,
   faUpload, faDownload, faRotate, faMagnifyingGlass,
   faSpinner, faTable, faArrowLeft,
-  faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark
+  faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
+  faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper,
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
   faFileLines, faClock, faFile, faCircleCheck,
   faCircleXmark, faHourglassHalf,
-  faCopy, faImage as faImageRegular
+  faCopy, faImage as faImageRegular, faFileImage,
 } from '@fortawesome/free-regular-svg-icons'
 
 library.add(
@@ -24,7 +25,9 @@ library.add(
   faFileLines, faClock, faFile, faCircleCheck,
   faCircleXmark, faHourglassHalf,
   faCopy, faTable, faImageRegular, faSpinner, faArrowLeft,
-  faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark
+  faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
+  faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper,
+  faFileImage,
 )
 
 import '@/style.css'

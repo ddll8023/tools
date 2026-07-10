@@ -22,6 +22,15 @@ _TOOLS = [
         icon="fas fa-file-pdf",
         available=True,
     ),
+    ToolListItem(
+        id="image-converter",
+        name="ImageConverter",
+        path="image-converter",
+        display_name="图片格式转换",
+        description="将图片文件转换为 PNG、JPEG、WebP、BMP、GIF、TIFF 等格式，支持单张和批量转换",
+        icon="fas fa-image",
+        available=True,
+    ),
 ]
 
 

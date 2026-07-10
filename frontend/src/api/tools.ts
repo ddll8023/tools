@@ -173,3 +173,97 @@ export async function downloadPdf(taskId: string): Promise<void> {
 
   URL.revokeObjectURL(url)
 }
+
+/* ════════════════════════════════════════
+   图片格式转换 API
+   ════════════════════════════════════════ */
+
+export interface ImageConvertFileItem {
+  original_name: string
+  converted_name: string
+  file_size: number
+  original_format: string
+  index: number
+}
+
+export interface ImageConvertResponse {
+  task_id: string
+  files: ImageConvertFileItem[]
+  is_batch: boolean
+}
+
+export async function convertImages(
+  files: File[],
+  targetFormat: string,
+  quality = 85,
+): Promise<ImageConvertResponse> {
+  const formData = new FormData()
+  files.forEach((f) => formData.append('files', f))
+  formData.append('target_format', targetFormat)
+  formData.append('quality', String(quality))
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/image-converter/convert`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  const json: ApiResponse<ImageConvertResponse> = await res.json()
+
+  if (json.code !== 0) {
+    throw new Error(json.message || '转换失败')
+  }
+
+  return json.data as ImageConvertResponse
+}
+
+export async function downloadConvertedFile(taskId: string, fileIndex: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/image-converter/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
+  })
+
+  if (!res.ok) {
+    const json = await res.json()
+    throw new Error(json.message || '下载失败')
+  }
+
+  const disposition = res.headers.get('content-disposition')
+  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}_${fileIndex}.png`
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+
+  URL.revokeObjectURL(url)
+}
+
+export async function downloadAllConverted(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/image-converter/download-all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+
+  if (!res.ok) {
+    const json = await res.json()
+    throw new Error(json.message || '下载失败')
+  }
+
+  const disposition = res.headers.get('content-disposition')
+  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `图片转换_${taskId}.zip`
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+
+  URL.revokeObjectURL(url)
+}
