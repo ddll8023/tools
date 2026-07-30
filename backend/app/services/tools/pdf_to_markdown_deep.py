@@ -98,9 +98,8 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
         mineru_out = os.path.join(task_dir, "mineru_output")
         os.makedirs(mineru_out, exist_ok=True)
 
-        # MinerU 模型缓存目录
-        cache_dir = os.path.join(settings.ROOT_PATH, "..", "models", "mineru")
-        cache_dir = os.path.abspath(cache_dir)
+        # MinerU 模型缓存目录（项目内）
+        cache_dir = settings.mineru_model_path
         os.makedirs(cache_dir, exist_ok=True)
         hf_cache = os.path.join(cache_dir, "huggingface")
         os.makedirs(hf_cache, exist_ok=True)
@@ -119,7 +118,8 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
         write_status_atomic(task_dir, 15, "正在加载深度学习模型...")
 
         # 使用 venv 中 mineru 的完整路径，避免子进程 PATH 找不到可执行文件
-        mineru_exe = os.path.join(os.path.dirname(sys.executable), "mineru.exe")
+        mineru_bin = os.path.dirname(sys.executable)
+        mineru_exe = os.path.join(mineru_bin, "mineru.exe" if os.name == "nt" else "mineru")
 
         result = subprocess.run(
             [

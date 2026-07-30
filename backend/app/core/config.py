@@ -1,4 +1,5 @@
 import os
+import sys
 from pydantic_settings import BaseSettings
 
 
@@ -23,13 +24,15 @@ class Settings(BaseSettings):
     def libreoffice_path(self) -> str:
         """获取 LibreOffice 可执行文件路径，按优先级：
         1. .env 中显式指定的 LIBREOFFICE_PATH
-        2. 项目内便携版（PortableApps.com 结构 → 使用启动器）
+        2. 项目内便携版（Windows）
            - backend/resources/LibreOfficePortable/LibreOfficePortable.exe
-        3. 系统 PATH 中的 soffice
+        3. macOS 标准安装路径
+        4. 系统 PATH 中的 soffice
         """
         if self.LIBREOFFICE_PATH:
             return self.LIBREOFFICE_PATH
 
+        # Windows 便携版
         portable = os.path.join(
             self.ROOT_PATH,
             "resources",
@@ -38,6 +41,11 @@ class Settings(BaseSettings):
         )
         if os.path.exists(portable):
             return portable
+
+        # macOS 标准安装路径
+        mac_soffice = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+        if sys.platform == "darwin" and os.path.exists(mac_soffice):
+            return mac_soffice
 
         return "soffice"
 

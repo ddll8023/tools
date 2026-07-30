@@ -133,7 +133,9 @@ async function main() {
 
   // 2. 启动后端（直接 spawn，不用 startProcess 以避免 shell: true 的管道问题）
   console.log('[dev-runner] 2/3 启动后端 FastAPI ...')
-  const pythonBin = path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
+  const pythonBin = process.platform === 'win32'
+    ? path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
+    : path.join(BACKEND_DIR, '.venv', 'bin', 'python')
   backendProc = spawn(pythonBin, [
     '-m', 'uvicorn', 'app.main:app',
     '--host', '127.0.0.1', '--port', String(BACKEND_PORT),

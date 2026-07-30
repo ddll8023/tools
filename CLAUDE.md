@@ -1,171 +1,92 @@
-# 工具盒子 - 项目指南
+# 依赖下载问题记录
 
-## 前端测试
+## Electron 运行时下载失败
 
-### 测试策略
+### 现象
 
-| 类型 | 说明 | 后端依赖 |
-|------|------|---------|
-| 纯 UI 测试 | 验证组件渲染、交互逻辑，不上传真实文件 | ❌ 无需后端 |
-| 联调测试 | 前后端集成验证，上传真实文件校验完整数据流 | ✅ Playwright 自动启动后端 |
+执行 Electron 启动命令时出现：
 
-Playwright + Chromium，测试文件位于 `frontend/tests/`。
-
-### webServer 管理
-
-Playwright 通过 `webServer` 配置自动管理服务进程，开发者无需手动启动：
-
-- **纯 UI 测试**：仅启动 Vite（端口 5173）
-- **联调测试**：自动启动 Vite + 后端 Uvicorn（端口 4740）
-- 若对应端口已有进程，`reuseExistingServer: true` 会复用现有服务
-
-### 编写测试
-
-**纯 UI 测试**：在 `test.describe` 中直接验证 DOM 状态，无需后端。
-
-**联调测试**：
-
-```ts
-import { test, expect } from '@playwright/test'
-
-test('上传 PDF 并验证转换结果', async ({ page }) => {
-  await page.goto('/#/tools/pdf-to-markdown')
-
-  // 文件路径从项目根目录的数据/ 下选取
-  const testFile = 'path/to/test.pdf'
-  await page.locator('input[type="file"]').setInputFiles(testFile)
-
-  // 等待进度 → 等待结果 → 验证预览
-  await expect(page.getByText('正在解析 PDF 文件...')).toBeVisible({ timeout: 10000 })
-  await expect(page.getByText('转换结果')).toBeVisible({ timeout: 60000 })
-
-  // 验证统计和内容
-  await expect(page.getByText(/\d+ 页/).nth(1)).toBeVisible()
-  await expect(page.getByText(/\d+ 张图片/)).toBeVisible()
-  const preview = page.locator('.whitespace-pre-wrap')
-  await expect(preview).toBeVisible()
-  const content = await preview.textContent()
-  expect(content?.length).toBeGreaterThan(0)
-})
+```text
+Downloading Electron binary...
+TypeError: fetch failed
+Error: Electron failed to install correctly.
 ```
 
-新增联调测试时无需修改 `playwright.config.ts`（已配置好 Vite + Backend）。
+即使 `npm install` 成功，`node_modules/electron` 也可能只有 npm 包文件，缺少以下运行时文件：
 
-### 运行测试
+```text
+node_modules/electron/dist/
+node_modules/electron/path.txt
+```
+
+此时执行 `npx electron --version` 可能临时下载 Electron，失败后使用 `~/.npm/_npx/...` 下的临时包，而不是项目本地包。
+
+### 环境与版本
+
+- 系统：macOS Apple Silicon
+- 架构：`darwin arm64`
+- Node.js：`v26.5.0`
+- Electron：`43.2.0`
+- 项目目录：`/Users/mima1234/Desktop/code/tools`
+
+### 处理方式
+
+1. 进入项目目录，跳过 npm 安装脚本安装 Electron 包：
 
 ```bash
-cd frontend
+cd /Users/mima1234/Desktop/code/tools
+npm install --ignore-scripts electron@43.2.0
+```
 
-# 运行全部测试（纯 UI + 联调，自动启动 Vite + Backend）
-npx playwright test
+2. 下载 macOS Apple Silicon 对应的 Electron 运行时。优先使用 npmmirror：
 
-# 仅运行纯 UI 测试（跳过联调）
-npx playwright test --grep-invert "前后端联调"
+```bash
+curl -fL --retry 3 \
+  -o /tmp/electron-v43.2.0-darwin-arm64.zip \
+  https://npmmirror.com/mirrors/electron/43.2.0/electron-v43.2.0-darwin-arm64.zip
+```
 
-# 仅运行联调测试
-npx playwright test tests/pdf-integration.spec.ts
+镜像失败时使用官方地址：
 
-# 有头模式（可见浏览器窗口）
-npx playwright test --headed
+```bash
+curl -fL --retry 3 \
+  -o /tmp/electron-v43.2.0-darwin-arm64.zip \
+  https://github.com/electron/electron/releases/download/v43.2.0/electron-v43.2.0-darwin-arm64.zip
+```
 
-# 交互式 UI 模式
-npx playwright test --ui
+3. 解压到本地 Electron 包，并写入可执行文件路径：
 
-# 运行单个文件
-npx playwright test tests/home.spec.ts
+```bash
+rm -rf node_modules/electron/dist
+mkdir -p node_modules/electron/dist
+unzip -q -o \
+  /tmp/electron-v43.2.0-darwin-arm64.zip \
+  -d node_modules/electron/dist
+printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
+```
 
-# 查看 HTML 报告
-npx playwright show-report
+4. 验证安装：
+
+```bash
+./node_modules/.bin/electron --version
+```
+
+预期输出：
+
+```text
+v43.2.0
+```
+
+验证通过后启动项目：
+
+```bash
+npm run dev
 ```
 
 ### 注意事项
 
-- 项目使用 Vite + hash 路由，测试中访问工具页路径需加 `/#/` 前缀
-- Vite dev server 端口为 5173，后端端口 4740，均由 Playwright 配置自动管理
-- 仅安装了 Chromium，未安装 Firefox/WebKit
-- 测试无需手动启动任何服务（webServer 配置自动处理）
-- 首页侧边栏默认收起，工具页侧边栏默认展开
-- 21 个测试预计耗时约 10 秒，Electron 5 个测试约 3 秒
-- 有头模式默认无 slowMo，如需观察操作过程可临时添加 `launchOptions: { slowMo: 500 }`
-
-## Electron 测试
-
-### 运行 Electron 测试
-
-```bash
-cd frontend
-
-# 运行 Electron 测试（自动启动 Vite + Electron）
-npx playwright test --config=playwright-electron.config.ts
-
-# 有头模式
-npx playwright test --config=playwright-electron.config.ts --headed
-```
-
-### 前置步骤
-
-Electron 主进程 TypeScript 编译：
-
-```bash
-# 在项目根目录
-npm run compile:electron
-
-# 或
-cd electron && npx tsc -p tsconfig.json
-```
-
-### 注意事项
-
-- Electron 测试通过 `BACKEND_MANAGED=1` 环境变量让主进程跳过 Vite 启动，由 Playwright webServer 统一管理
-- 其他注意事项与前端测试相同
-
-## 后端开发
-
-### 技术栈
-
-FastAPI + Uvicorn + Python 3.12，包管理使用 uv。
-
-### 目录结构
-
-```
-backend/
-├── app/
-│   ├── main.py              # FastAPI 入口 + 全局异常处理器
-│   ├── core/config.py       # Settings（pydantic-settings）
-│   ├── utils/
-│   │   ├── exception.py     # ServiceException
-│   │   └── logger_config.py # 统一日志
-│   ├── schemas/response.py  # 统一响应 success()/error() + ApiResponse
-│   └── api/v1/
-│       ├── health.py        # POST /api/v1/health
-│       └── tools.py         # POST /api/v1/tools/list
-├── pyproject.toml
-├── .env
-└── .python-version
-```
-
-### 启动方式
-
-```bash
-# 从项目根目录
-npm run dev:backend
-
-# 或直接使用 uv
-cd backend
-uv run uvicorn app.main:app --reload
-```
-
-### 验证
-
-```bash
-curl -X POST http://127.0.0.1:4740/api/v1/health
-# 返回：{"code":0,"message":"success","data":{"status":"ok"}}
-```
-
-### 依赖管理
-
-```bash
-cd backend
-uv add 包名     # 新增依赖
-uv sync         # 同步依赖
-```
+- 当前 macOS Apple Silicon 必须下载 `darwin-arm64`，不要下载 `darwin-x64`。
+- `ELECTRON_MIRROR` 是 Electron 下载镜像的正确环境变量；`npm_config_electron_mirror` 不是当前 Electron 下载器使用的变量。
+- npm registry（例如 `https://registry.npmmirror.com`）只负责 Electron npm 包下载，Electron 运行时仍需单独下载。
+- 使用 `npm install --ignore-scripts` 后不会自动下载 Electron 运行时，必须手动完成上述下载和解压步骤。
+- `npx electron` 在本地包缺失时可能安装临时包；优先使用 `./node_modules/.bin/electron` 验证项目本地安装。
