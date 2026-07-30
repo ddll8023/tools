@@ -9,7 +9,7 @@ import {
   faUpload, faDownload, faRotate, faMagnifyingGlass,
   faSpinner, faTable, faArrowLeft,
   faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
-  faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper,
+  faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper, faBook,
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
@@ -26,7 +26,7 @@ library.add(
   faCircleXmark, faHourglassHalf,
   faCopy, faTable, faImageRegular, faSpinner, faArrowLeft,
   faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
-  faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper,
+  faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper, faBook,
   faFileImage,
 )
 

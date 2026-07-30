@@ -15,6 +15,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/WordToPdf.vue'),
   },
+  'epub-to-markdown': {
+    icon: ['fas', 'book'],
+    component: () => import('@/views/tools/EpubToMarkdown.vue'),
+  },
   'image-converter': {
     icon: ['fas', 'image'],
     component: () => import('@/views/tools/ImageConverter.vue'),

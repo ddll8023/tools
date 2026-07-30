@@ -9,6 +9,7 @@ from app.api.v1.tools.list import router as tools_list_router
 from app.api.v1.tools import pdf_to_markdown as router_pdf_to_markdown
 from app.api.v1.tools import word_to_pdf as router_word_to_pdf
 from app.api.v1.tools import image_converter as router_image_converter
+from app.api.v1.tools import epub_to_markdown as router_epub_to_markdown
 from app.schemas.response import ErrorCode
 from app.utils.logger_config import setup_logger
 from app.utils.exception import ServiceException
@@ -66,6 +67,7 @@ app.include_router(tools_list_router)
 app.include_router(router_pdf_to_markdown.router)
 app.include_router(router_word_to_pdf.router)
 app.include_router(router_image_converter.router)
+app.include_router(router_epub_to_markdown.router)
 
 
 @app.exception_handler(ServiceException)

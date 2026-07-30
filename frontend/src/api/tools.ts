@@ -20,6 +20,21 @@ export interface PreviewResponse {
   image_count: number
 }
 
+export interface EpubConvertResponse {
+  task_id: string
+  filename: string
+  chapter_count: number
+  image_count: number
+}
+
+export interface EpubPreviewResponse {
+  markdown_content: string
+  chapter_count: number
+  table_count: number
+  image_count: number
+  filename: string
+}
+
 export interface GetProgressResponse {
   progress: number
   stage: string
@@ -123,6 +138,72 @@ export async function downloadMd(taskId: string): Promise<void> {
   a.download = filename
   a.click()
 
+  URL.revokeObjectURL(url)
+}
+
+/* ════════════════════════════════════════
+   EPUB 转 Markdown API
+   ════════════════════════════════════════ */
+
+export async function convertEpub(file: File): Promise<EpubConvertResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/epub-to-markdown/convert`, {
+    method: 'POST',
+    body: formData,
+  })
+  const json: ApiResponse<EpubConvertResponse> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '转换失败')
+  }
+  return json.data as EpubConvertResponse
+}
+
+export async function getEpubPreview(taskId: string): Promise<EpubPreviewResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/epub-to-markdown/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+  const json: ApiResponse<EpubPreviewResponse> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '获取预览失败')
+  }
+  return json.data as EpubPreviewResponse
+}
+
+export async function downloadEpub(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/epub-to-markdown/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+  if (!res.ok) {
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '下载失败')
+    }
+    throw new Error(`下载失败（HTTP ${res.status}）`)
+  }
+
+  const contentType = res.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    const json: ApiResponse<null> = await res.json()
+    throw new Error(json.message || '下载失败')
+  }
+
+  const disposition = res.headers.get('content-disposition')
+  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}.zip`
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
 

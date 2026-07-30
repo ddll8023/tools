@@ -31,6 +31,15 @@ _TOOLS = [
         icon="fas fa-image",
         available=True,
     ),
+    ToolListItem(
+        id="epub-to-markdown",
+        name="EpubToMarkdown",
+        path="epub-to-markdown",
+        display_name="EPUB 转 Markdown",
+        description="将 EPUB 电子书转换为 Markdown，保留章节结构和图片资源",
+        icon="fas fa-book",
+        available=True,
+    ),
 ]
 
 
