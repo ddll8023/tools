@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
-import { initToolConfigs, generateToolRoutes } from '@/router/tools'
+import { initToolConfigs, generateToolRoutes, toolConfigs } from '@/router/tools'
 
 export async function createAppRouter() {
   const configs = await initToolConfigs()
@@ -32,8 +32,22 @@ export async function createAppRouter() {
     },
   ]
 
-  return createRouter({
+  const router = createRouter({
     history: createWebHashHistory(),
     routes,
   })
+
+  // 不可用工具（如缺少 LibreOffice 的 Word 转 PDF）禁止直接进入，重定向首页
+  router.beforeEach((to) => {
+    const toolId = to.meta.id as string | undefined
+    if (toolId) {
+      const tool = toolConfigs.value.find((t) => t.id === toolId)
+      if (tool && tool.available === false) {
+        return { path: '/' }
+      }
+    }
+    return true
+  })
+
+  return router
 }

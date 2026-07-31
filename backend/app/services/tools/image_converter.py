@@ -2,14 +2,14 @@
 
 import os
 import uuid
+import shutil
 import zipfile
 from io import BytesIO
 
 from fastapi import UploadFile
 from PIL import Image, ImageOps
 
-from app.core.config import settings
-from app.utils.file import save_file
+from app.utils.file import safe_filename
 from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
 from app.utils.exception import ServiceException
 from app.schemas.response import ErrorCode
@@ -78,12 +78,20 @@ def _save_single(img: Image.Image, path: str, target_fmt: str, quality: int):
     img.close()
 
 
-def _process_tiff_multi_page(img: Image.Image, file: UploadFile, task_dir: str,
-                             idx: int, target_fmt: str, quality: int,
+def _check_pixel_limit(width: int, height: int, filename: str):
+    """校验单帧像素规模（多页/动画的每一帧都要校验）。"""
+    if width * height > MAX_PIXEL_COUNT:
+        raise ServiceException(
+            ErrorCode.PARAM_ERROR,
+            f"图片分辨率过高: {filename}（最大 4000 万像素）",
+        )
+
+
+def _process_tiff_multi_page(img: Image.Image, task_dir: str, original_stem: str,
+                             original_name: str, target_fmt: str, quality: int,
                              results: list):
-    """处理多页 TIFF，每页单独保存"""
-    target_fmt_pil, target_ext = TARGET_FORMAT_MAP.get(target_fmt.lower(), (target_fmt, f".{target_fmt.lower()}"))
-    original_stem = os.path.splitext(file.filename or f"image_{idx}")[0][:60]
+    """处理多页 TIFF，每页单独保存（文件名以结果索引为前缀，与下载匹配）"""
+    _, target_ext = TARGET_FORMAT_MAP[target_fmt.lower()]
     pages_saved = 0
 
     try:
@@ -91,18 +99,20 @@ def _process_tiff_multi_page(img: Image.Image, file: UploadFile, task_dir: str,
             img.seek(img.tell())
             page = img.copy()
             page = ImageOps.exif_transpose(page) or page
+            _check_pixel_limit(page.width, page.height, original_name)
             page = _normalize_mode(page, target_fmt)
 
+            index = len(results)
             page_name = f"{original_stem}_p{pages_saved}_converted{target_ext}"
-            page_path = os.path.join(task_dir, f"{idx}_{pages_saved}_{page_name}")
+            page_path = os.path.join(task_dir, f"{index}_{page_name}")
             _save_single(page, page_path, target_fmt, quality)
 
             results.append(ConvertFileItem(
-                original_name=file.filename or f"image_{idx}",
+                original_name=original_name,
                 converted_name=page_name,
                 file_size=os.path.getsize(page_path),
                 original_format="tiff",
-                index=len(results),
+                index=index,
             ))
             pages_saved += 1
             img.seek(img.tell() + 1)
@@ -110,18 +120,19 @@ def _process_tiff_multi_page(img: Image.Image, file: UploadFile, task_dir: str,
         pass
 
 
-def _process_animated_gif(img: Image.Image, file: UploadFile, task_dir: str,
-                          idx: int, target_fmt: str, quality: int,
+def _process_animated_gif(img: Image.Image, task_dir: str, original_stem: str,
+                          original_name: str, target_fmt: str, quality: int,
                           results: list):
     """处理动画 GIF → WebP 保留动画"""
-    original_stem = os.path.splitext(file.filename or f"image_{idx}")[0][:60]
-    target_fmt_pil, target_ext = TARGET_FORMAT_MAP.get(target_fmt.lower(), (target_fmt, f".{target_fmt.lower()}"))
+    _, target_ext = TARGET_FORMAT_MAP[target_fmt.lower()]
     frames, durations = [], []
 
     try:
         while True:
             img.seek(img.tell())
-            frames.append(img.copy())
+            frame = img.copy()
+            _check_pixel_limit(frame.width, frame.height, original_name)
+            frames.append(frame)
             durations.append(img.info.get("duration", 100))
             img.seek(img.tell() + 1)
     except EOFError:
@@ -129,13 +140,17 @@ def _process_animated_gif(img: Image.Image, file: UploadFile, task_dir: str,
 
     if len(frames) <= 1:
         # 静态 GIF，走普通单张流程
+        for f in frames:
+            f.close()
+        img.seek(0)  # 复位到第一帧，交给普通单张流程
         return False
 
     for i, f in enumerate(frames):
         frames[i] = _normalize_mode(f, target_fmt)
 
+    index = len(results)
     converted_name = f"{original_stem}_converted{target_ext}"
-    converted_path = os.path.join(task_dir, f"{idx}_{converted_name}")
+    converted_path = os.path.join(task_dir, f"{index}_{converted_name}")
 
     kwargs = {"quality": quality} if target_fmt == "WEBP" else {}
     frames[0].save(
@@ -148,11 +163,11 @@ def _process_animated_gif(img: Image.Image, file: UploadFile, task_dir: str,
         f.close()
 
     results.append(ConvertFileItem(
-        original_name=file.filename or f"image_{idx}",
+        original_name=original_name,
         converted_name=converted_name,
         file_size=os.path.getsize(converted_path),
         original_format="gif",
-        index=len(results),
+        index=index,
     ))
     return True
 
@@ -172,7 +187,7 @@ def convert_images(files: list[UploadFile], target_format: str, quality: int = 8
     if len(files) > MAX_BATCH_COUNT:
         raise ServiceException(ErrorCode.PARAM_ERROR, f"单次最多上传 {MAX_BATCH_COUNT} 张图片")
 
-    target_fmt_pil, target_ext = TARGET_FORMAT_MAP[target_format.lower()]
+    _, target_ext = TARGET_FORMAT_MAP[target_format.lower()]
 
     task_id = uuid.uuid4().hex[:12]
     task_dir = get_task_dir(task_id)
@@ -180,80 +195,90 @@ def convert_images(files: list[UploadFile], target_format: str, quality: int = 8
 
     result_files = []
 
-    for idx, file in enumerate(files):
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        if ext not in SUPPORTED_EXTENSIONS:
-            raise ServiceException(
-                ErrorCode.UNSUPPORTED_FILE_FORMAT,
-                f"不支持的文件格式: {file.filename}",
-            )
+    try:
+        for idx, file in enumerate(files):
+            original_name = safe_filename(file.filename, f"image_{idx}")
+            ext = os.path.splitext(original_name)[1].lower()
+            if ext not in SUPPORTED_EXTENSIONS:
+                raise ServiceException(
+                    ErrorCode.UNSUPPORTED_FILE_FORMAT,
+                    f"不支持的文件格式: {file.filename}",
+                )
 
-        # 文件大小校验
-        content = file.file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise ServiceException(
-                ErrorCode.FILE_TOO_LARGE,
-                f"文件过大: {file.filename}（最大 50MB）",
-            )
+            # 文件大小校验
+            content = file.file.read()
+            if len(content) > MAX_FILE_SIZE:
+                raise ServiceException(
+                    ErrorCode.FILE_TOO_LARGE,
+                    f"文件过大: {original_name}（最大 50MB）",
+                )
 
-        # Pillow 打开
-        try:
-            img = Image.open(BytesIO(content))
-        except Exception:
-            raise ServiceException(
-                ErrorCode.UNSUPPORTED_FILE_FORMAT,
-                f"无法识别的图片文件: {file.filename}",
-            )
-
-        # 像素校验
-        width, height = img.size
-        if width * height > MAX_PIXEL_COUNT:
-            img.close()
-            raise ServiceException(
-                ErrorCode.PARAM_ERROR,
-                f"图片分辨率过高: {file.filename}（最大 4000 万像素）",
-            )
-
-        source_fmt = _get_source_format(file.filename or f"image_{idx}")
-        original_stem = os.path.splitext(file.filename or f"image_{idx}")[0][:60]
-
-        # 多页 TIFF 源文件 → 每页单独处理
-        if ext in (".tiff", ".tif"):
+            # Pillow 打开
             try:
-                img.seek(1)  # 尝试跳转到第二帧
-                has_multiple = True
-            except (EOFError, AttributeError):
-                has_multiple = False
-            finally:
-                img.seek(0)
+                img = Image.open(BytesIO(content))
+            except Exception:
+                raise ServiceException(
+                    ErrorCode.UNSUPPORTED_FILE_FORMAT,
+                    f"无法识别的图片文件: {original_name}",
+                )
 
-            if has_multiple:
-                _process_tiff_multi_page(img, file, task_dir, idx, target_fmt, quality, result_files)
-                continue
+            # 像素校验（首帧）
+            _check_pixel_limit(img.width, img.height, original_name)
 
-        # 动画 GIF → WebP 保留动画
-        if ext == ".gif" and target_fmt == "WEBP":
-            if _process_animated_gif(img, file, task_dir, idx, target_fmt, quality, result_files):
-                continue
-        elif ext == ".gif":
-            # GIF → 其他格式，只取第一帧
-            pass
+            source_fmt = _get_source_format(original_name)
+            original_stem = os.path.splitext(original_name)[0][:60]
 
-        # 普通单张转换
-        img = ImageOps.exif_transpose(img) or img
-        img = _normalize_mode(img, target_fmt)
+            # 多页 TIFF 源文件 → 每页单独处理
+            if ext in (".tiff", ".tif"):
+                try:
+                    img.seek(1)  # 尝试跳转到第二帧
+                    has_multiple = True
+                except (EOFError, AttributeError):
+                    has_multiple = False
+                finally:
+                    img.seek(0)
 
-        converted_name = f"{original_stem}_converted{target_ext}"
-        converted_path = os.path.join(task_dir, f"{idx}_{converted_name}")
-        _save_single(img, converted_path, target_fmt, quality)
+                if has_multiple:
+                    _process_tiff_multi_page(
+                        img, task_dir, original_stem, original_name,
+                        target_fmt, quality, result_files,
+                    )
+                    continue
 
-        result_files.append(ConvertFileItem(
-            original_name=file.filename or f"image_{idx}",
-            converted_name=converted_name,
-            file_size=os.path.getsize(converted_path),
-            original_format=source_fmt,
-            index=len(result_files),
-        ))
+            # 动画 GIF → WebP 保留动画
+            if ext == ".gif" and target_fmt == "WEBP":
+                if _process_animated_gif(
+                    img, task_dir, original_stem, original_name,
+                    target_fmt, quality, result_files,
+                ):
+                    continue
+            elif ext == ".gif":
+                # GIF → 其他格式，只取第一帧
+                pass
+
+            # 普通单张转换
+            img = ImageOps.exif_transpose(img) or img
+            img = _normalize_mode(img, target_fmt)
+
+            index = len(result_files)
+            converted_name = f"{original_stem}_converted{target_ext}"
+            converted_path = os.path.join(task_dir, f"{index}_{converted_name}")
+            _save_single(img, converted_path, target_fmt, quality)
+
+            result_files.append(ConvertFileItem(
+                original_name=original_name,
+                converted_name=converted_name,
+                file_size=os.path.getsize(converted_path),
+                original_format=source_fmt,
+                index=index,
+            ))
+    except ServiceException:
+        # 失败时清理已生成的部分结果，避免孤儿任务目录
+        shutil.rmtree(task_dir, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(task_dir, ignore_errors=True)
+        raise
 
     logger.info(f"图片转换完成: task_id={task_id} 文件数={len(result_files)}")
     return ConvertResponse(
@@ -269,15 +294,15 @@ def download_file(task_id: str, file_index: int | None = None) -> tuple:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     task_dir = get_task_dir(task_id)
-    resolved = os.path.abspath(task_dir)
-    if not resolved.startswith(os.path.abspath(TEMP_DIR)):
+    root = os.path.abspath(TEMP_DIR)
+    if os.path.commonpath([root, os.path.abspath(task_dir)]) != root:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     if not os.path.exists(task_dir):
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在或已过期")
 
     if file_index is not None:
-        # 下载单张
+        # 下载单张：文件名前缀即为结果索引，与转换响应一一对应
         for name in os.listdir(task_dir):
             if name.startswith(f"{file_index}_"):
                 file_path = os.path.join(task_dir, name)
@@ -285,11 +310,17 @@ def download_file(task_id: str, file_index: int | None = None) -> tuple:
                 return file_path, display_name
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在")
 
-    # 下载全部（ZIP 包）
-    zip_path = os.path.join(task_dir, "all_converted.zip")
+    # 下载全部（ZIP 包）：唯一文件名避免并发下载互相截断，先清理旧包
+    for name in os.listdir(task_dir):
+        if name.startswith("all_converted_") and name.endswith(".zip"):
+            try:
+                os.remove(os.path.join(task_dir, name))
+            except OSError:
+                pass
+    zip_path = os.path.join(task_dir, f"all_converted_{uuid.uuid4().hex[:8]}.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in sorted(os.listdir(task_dir)):
-            if name == "all_converted.zip" or name.endswith(".json"):
+            if name.startswith("all_converted_") or name.endswith(".json"):
                 continue
             file_path = os.path.join(task_dir, name)
             if os.path.isfile(file_path):

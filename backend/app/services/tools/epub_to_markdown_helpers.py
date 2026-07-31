@@ -15,9 +15,13 @@ from app.schemas.response import ErrorCode
 from app.schemas.tools.epub_to_markdown import GetPreviewResponse
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
+from app.utils.markdown import count_tables
 from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
 
 logger = setup_logger(__name__)
+
+# EPUB 模块内部仍使用 _count_tables 名称，实现统一来自 utils.markdown
+_count_tables = count_tables
 
 MAX_ENTRY_COUNT = 10_000
 MAX_UNCOMPRESSED_SIZE = 200 * 1024 * 1024
@@ -75,8 +79,6 @@ def validate_and_extract_epub(epub_path: str, extract_dir: str) -> None:
                 if name in names:
                     _reject("EPUB 包含重复文件路径")
                 names.add(name)
-                if info.is_dir() or info.filename.endswith(("/", "\\")):
-                    _reject("EPUB 不应包含目录条目")
                 if info.file_size > MAX_ENTRY_SIZE or info.file_size < 0:
                     _reject("EPUB 包含过大的文件")
                 total_size += info.file_size
@@ -240,11 +242,6 @@ def _ordered_spine(
     return preferred + [(member, properties) for member, properties in spine if member not in seen]
 
 
-def _count_tables(markdown: str) -> int:
-    """统计 Markdown 表格数量，而不是表格行数。"""
-    return len(re.findall(r"(?m)^\s*\|(?:\s*:?-+:?\s*\|)+\s*$", markdown))
-
-
 def convert_epub(root_dir: str) -> tuple[str, int, int, int, str]:
     """解析 EPUB 并生成 output.md，返回内容与统计。"""
     container_path = os.path.join(root_dir, "META-INF", "container.xml")
@@ -318,7 +315,14 @@ def create_download_zip(task_id: str) -> tuple[str, str]:
     md_path = os.path.join(task_dir, "output.md")
     if not os.path.isfile(md_path):
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "转换结果不存在")
-    zip_path = os.path.join(task_dir, "epub_markdown.zip")
+    # 使用唯一文件名，避免并发下载互相截断；下载前清理旧包
+    for name in os.listdir(task_dir):
+        if name.startswith("epub_markdown_") and name.endswith(".zip"):
+            try:
+                os.remove(os.path.join(task_dir, name))
+            except OSError:
+                pass
+    zip_path = os.path.join(task_dir, f"epub_markdown_{uuid.uuid4().hex[:8]}.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(md_path, "book.md")
         images_dir = os.path.join(task_dir, "output", "images")

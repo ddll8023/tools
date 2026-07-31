@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
 
@@ -30,23 +30,7 @@ function createWindow() {
     }
   })
 
-  // 窗口控制 IPC
-  ipcMain.handle('window:minimize', () => {
-    mainWindow?.minimize()
-  })
-  ipcMain.handle('window:maximize', () => {
-    if (mainWindow?.isMaximized()) {
-      mainWindow.unmaximize()
-    } else {
-      mainWindow?.maximize()
-    }
-  })
-  ipcMain.handle('window:close', () => {
-    mainWindow?.close()
-  })
-  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
-
-  // 监听最大化状态变化通知渲染进程
+  // 监听最大化状态变化通知渲染进程（窗口级事件，可随窗口重复注册）
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('window:maximize-changed', true)
   })
@@ -68,6 +52,46 @@ function createWindow() {
   })
 }
 
+/** 窗口控制 IPC：只注册一次，避免窗口重建时重复注册抛错 */
+function registerWindowIpc() {
+  ipcMain.handle('window:minimize', () => {
+    mainWindow?.minimize()
+  })
+  ipcMain.handle('window:maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow?.maximize()
+    }
+  })
+  ipcMain.handle('window:close', () => {
+    mainWindow?.close()
+  })
+  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+}
+
+/** 终止进程树：macOS/Linux 杀进程组，Windows 用 taskkill /T */
+function killProcessTree(proc: ChildProcess) {
+  if (!proc || !proc.pid) return
+  try {
+    if (process.platform === 'win32') {
+      execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' })
+    } else {
+      try {
+        process.kill(-proc.pid, 'SIGTERM')
+      } catch {
+        proc.kill()
+      }
+    }
+  } catch {
+    try {
+      proc.kill()
+    } catch {
+      // 进程已退出
+    }
+  }
+}
+
 function waitForBackendReady(): Promise<void> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 30000
@@ -80,7 +104,16 @@ function waitForBackendReady(): Promise<void> {
       }, (res) => {
         let body = ''
         res.on('data', (chunk) => body += chunk)
-        res.on('end', () => resolve())
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body)
+            if (json.code === 0) return resolve()
+          } catch {
+            // 响应不是预期的 JSON，继续等待
+          }
+          if (Date.now() > deadline) { reject(new Error('后端启动超时')); return }
+          setTimeout(check, 500)
+        })
       })
       req.on('error', () => {
         if (Date.now() > deadline) { reject(new Error('后端启动超时')); return }
@@ -106,6 +139,8 @@ function startBackend(): Promise<void> {
     ], {
       cwd: BACKEND_DIR,
       shell: true,
+      // 创建独立进程组，退出时可按组终止 uv 与 uvicorn 子进程
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONUNBUFFERED: '1' }
     })
@@ -125,7 +160,7 @@ function startBackend(): Promise<void> {
 
 function stopBackend() {
   if (backendProcess) {
-    backendProcess.kill()
+    killProcessTree(backendProcess)
     backendProcess = null
   }
 }
@@ -163,6 +198,8 @@ function startVite(): Promise<void> {
     viteProcess = spawn('npm', ['run', 'dev'], {
       cwd: FRONTEND_DIR,
       shell: true,
+      // 创建独立进程组，退出时可按组终止 npm 与 vite 子进程
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env }
     })
@@ -187,12 +224,14 @@ function startVite(): Promise<void> {
 
 function stopVite() {
   if (viteProcess) {
-    viteProcess.kill()
+    killProcessTree(viteProcess)
     viteProcess = null
   }
 }
 
 app.whenReady().then(async () => {
+  registerWindowIpc()
+
   if (isDev) {
     if (process.env.BACKEND_MANAGED) {
       console.log('[main] 由 dev-runner 管理，跳过后端和 Vite 启动')

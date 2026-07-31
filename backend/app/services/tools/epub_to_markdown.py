@@ -16,7 +16,7 @@ from app.services.tools.epub_to_markdown_helpers import (
     validate_and_extract_epub,
 )
 from app.utils.exception import ServiceException
-from app.utils.file import save_file
+from app.utils.file import save_file, safe_filename
 from app.utils.logger_config import setup_logger
 from app.utils.temp_cleanup import get_task_dir
 
@@ -27,7 +27,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 
 def convert_epub_file(file: UploadFile) -> ConvertResponse:
     """上传并同步转换 EPUB。"""
-    filename = os.path.basename(file.filename or "")
+    filename = safe_filename(file.filename, "book.epub")
     if not filename.lower().endswith(".epub"):
         raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "不支持的文件格式")
 

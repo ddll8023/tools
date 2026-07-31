@@ -9,7 +9,7 @@ import subprocess
 from fastapi import UploadFile
 
 from app.core.config import settings
-from app.utils.file import save_file
+from app.utils.file import save_file, safe_filename
 from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
 from app.utils.exception import ServiceException
 from app.schemas.response import ErrorCode
@@ -30,9 +30,28 @@ if os.name == "nt":
     _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 
+def _kill_process_tree(proc: subprocess.Popen):
+    """超时后终止 LibreOffice 进程（Windows 下连子进程一起终止）。"""
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+            )
+        else:
+            proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+
 def convert_word(file: UploadFile) -> ConvertResponse:
     """转换 Word 文档为 PDF"""
-    ext = os.path.splitext(file.filename or "")[1].lower()
+    safe_name = safe_filename(file.filename, "output")
+    ext = os.path.splitext(safe_name)[1].lower()
     if ext not in SUPPORTED_EXTENSIONS:
         raise ServiceException(
             ErrorCode.UNSUPPORTED_FILE_FORMAT,
@@ -55,10 +74,10 @@ def convert_word(file: UploadFile) -> ConvertResponse:
 
     output_pdf = os.path.join(task_dir, "output.pdf")
 
-    logger.info(f"开始 Word 转 PDF: task_id={task_id} filename={file.filename}")
+    logger.info(f"开始 Word 转 PDF: task_id={task_id} filename={safe_name}")
 
     try:
-        subprocess.run(
+        proc = subprocess.Popen(
             [
                 LIBREOFFICE_PATH,
                 "--headless",
@@ -67,26 +86,28 @@ def convert_word(file: UploadFile) -> ConvertResponse:
                 "--outdir", task_dir,
                 input_path,
             ],
-            check=True,
-            capture_output=True,
-            timeout=CONVERT_TIMEOUT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             **_POPEN_KWARGS,
         )
+        try:
+            _stdout, stderr = proc.communicate(timeout=CONVERT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _kill_process_tree(proc)
+            raise ServiceException(
+                ErrorCode.TIMEOUT,
+                "转换超时，文档可能过大或格式复杂",
+            )
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace") if stderr else "未知错误"
+            raise ServiceException(
+                ErrorCode.CONVERSION_FAILED,
+                f"转换失败: {err}",
+            )
     except FileNotFoundError:
         raise ServiceException(
             ErrorCode.SERVICE_UNAVAILABLE,
             "未检测到 LibreOffice，请先安装",
-        )
-    except subprocess.TimeoutExpired:
-        raise ServiceException(
-            ErrorCode.TIMEOUT,
-            "转换超时，文档可能过大或格式复杂",
-        )
-    except subprocess.CalledProcessError as e:
-        stderr = e.stderr.decode(errors="replace") if e.stderr else "未知错误"
-        raise ServiceException(
-            ErrorCode.CONVERSION_FAILED,
-            f"转换失败: {stderr}",
         )
 
     if not os.path.exists(output_pdf):
@@ -96,13 +117,13 @@ def convert_word(file: UploadFile) -> ConvertResponse:
         )
 
     # 保存原始文件名供下载时使用
-    meta = {"original_filename": file.filename}
+    meta = {"original_filename": safe_name}
     meta_path = os.path.join(task_dir, "meta.json")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)
 
-    logger.info(f"Word 转换完成: task_id={task_id} filename={file.filename}")
-    return ConvertResponse(task_id=task_id, filename=file.filename)
+    logger.info(f"Word 转换完成: task_id={task_id} filename={safe_name}")
+    return ConvertResponse(task_id=task_id, filename=safe_name)
 
 
 def download_pdf(task_id: str) -> tuple:
@@ -112,8 +133,8 @@ def download_pdf(task_id: str) -> tuple:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     task_dir = get_task_dir(task_id)
-    resolved = os.path.abspath(task_dir)
-    if not resolved.startswith(os.path.abspath(TEMP_DIR)):
+    root = os.path.abspath(TEMP_DIR)
+    if os.path.commonpath([root, os.path.abspath(task_dir)]) != root:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     pdf_path = os.path.join(task_dir, "output.pdf")

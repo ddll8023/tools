@@ -5,11 +5,19 @@ import json
 
 from app.utils.temp_cleanup import TEMP_DIR, UPLOADS_DIR, get_task_dir, validate_task_id
 from app.utils.exception import ServiceException
+from app.utils.markdown import count_tables
 from app.schemas.response import ErrorCode
 from app.utils.logger_config import setup_logger
 from app.schemas.tools.pdf_to_markdown import GetPreviewResponse
 
 logger = setup_logger(__name__)
+
+
+def _check_task_path(task_dir: str):
+    """校验任务目录仍位于临时目录内，防止路径逃逸。"""
+    root = os.path.abspath(TEMP_DIR)
+    if os.path.commonpath([root, os.path.abspath(task_dir)]) != root:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
 
 def get_preview_detail(task_id: str):
@@ -19,9 +27,7 @@ def get_preview_detail(task_id: str):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     task_dir = get_task_dir(task_id)
-    resolved = os.path.abspath(task_dir)
-    if not resolved.startswith(os.path.abspath(TEMP_DIR)):
-        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
+    _check_task_path(task_dir)
 
     if not os.path.exists(task_dir):
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "任务不存在")
@@ -36,7 +42,7 @@ def get_preview_detail(task_id: str):
     with open(md_path, encoding="utf-8") as f:
         md_content = f.read()
 
-    table_count = md_content.count("\n|---")
+    table_count = count_tables(md_content)
     page_count = md_content.count("\n---\n\n## 第")
 
     # 标准模式使用 ## 第 N 页 标记分页，MinerU 输出无此标记时从原始 PDF 获取页数
@@ -67,9 +73,7 @@ def download_md(task_id: str):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     task_dir = get_task_dir(task_id)
-    resolved = os.path.abspath(task_dir)
-    if not resolved.startswith(os.path.abspath(TEMP_DIR)):
-        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
+    _check_task_path(task_dir)
 
     md_path = os.path.join(task_dir, "output.md")
     if not os.path.exists(md_path):

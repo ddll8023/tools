@@ -5,21 +5,59 @@
  */
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { marked } from 'marked'
+import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
 import { convertPdf, getPreview, getProgress } from '@/api/tools'
 import type { PreviewResponse } from '@/api/tools'
 
-// 配置 marked 语法高亮
-marked.use(markedHighlight({
-  emptyLangClass: 'hljs',
-  langPrefix: 'hljs language-',
-  highlight(code, lang) {
-    const language = hljs.getLanguage(lang) ? lang : 'plaintext'
-    return hljs.highlight(code, { language }).value
+const markdown = new Marked(
+  markedHighlight({
+    emptyLangClass: 'hljs',
+    langPrefix: 'hljs language-',
+    highlight(code, lang) {
+      const language = hljs.getLanguage(lang) ? lang : 'plaintext'
+      return hljs.highlight(code, { language }).value
+    },
+  }),
+  {
+    renderer: {
+      // 禁止原始 HTML，防止 PDF 内容或编辑内容注入脚本
+      html: () => '',
+      link: function ({ href, title, tokens }) {
+        const safeHref = safeUrl(href)
+        const text = this.parser.parseInline(tokens)
+        const titleAttr = title ? ` title="${escapeAttribute(title)}"` : ''
+        return `<a href="${escapeAttribute(safeHref)}"${titleAttr}>${text}</a>`
+      },
+      image: function ({ href, text }) {
+        if (href.startsWith('images/')) {
+          const imageName = href.slice('images/'.length)
+          return `<div class="markdown-image-placeholder">图片资源未嵌入预览：images/${escapeHtml(imageName)}</div>`
+        }
+        return `<span class="markdown-image-placeholder">已隐藏不安全图片资源：${escapeHtml(text || href)}</span>`
+      },
+    },
+  },
+)
+
+function safeUrl(value: string): string {
+  try {
+    const url = new URL(value, window.location.origin)
+    if (['http:', 'https:', 'mailto:'].includes(url.protocol)) return value
+  } catch {
+    // Invalid URLs are rendered as inert links.
   }
-}))
+  return '#'
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] || char)
+}
+
+function escapeAttribute(value: string): string {
+  return escapeHtml(value)
+}
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 const POLL_INTERVAL = 1500
@@ -53,7 +91,7 @@ const isWideMode = computed(() => currentState.value === 'result' && viewMode.va
  */
 const renderedMarkdown = computed(() => {
   if (!editingMarkdown.value) return ''
-  return marked.parse(editingMarkdown.value)
+  return markdown.parse(editingMarkdown.value, { async: false })
 })
 
 /* ════════════════════════════════════════
@@ -588,7 +626,7 @@ function resetUpload() {
   font-style: italic;
 }
 
-/* ── 图片 ── */
+/* ── 图片占位符（图片资源不在预览中内嵌展示） ── */
 .markdown-preview img {
   max-width: 100%;
   height: auto;
@@ -596,6 +634,15 @@ function resetUpload() {
   margin: 12px 0;
   border: 1px solid var(--color-border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.markdown-image-placeholder {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 /* ── 首尾元素间距清除 ── */

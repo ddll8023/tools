@@ -50,6 +50,31 @@ export interface ToolItem {
   available: boolean
 }
 
+/**
+ * 解析 Content-Disposition 中的文件名。
+ * 优先处理 RFC 5987 的 filename*=utf-8''（中文文件名时 FastAPI/Starlette 输出此格式），
+ * 失败时回退到普通 filename= 或默认名。
+ */
+function parseContentDispositionFilename(
+  disposition: string | null,
+  fallback: string,
+): string {
+  if (!disposition) return fallback
+  const star = /filename\*=utf-8''([^;]+)/i.exec(disposition)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim())
+    } catch {
+      return fallback
+    }
+  }
+  const plain =
+    /filename="([^"]*)"/i.exec(disposition) ||
+    /filename=([^;]+)/i.exec(disposition)
+  if (plain) return plain[1].trim()
+  return fallback
+}
+
 export async function fetchToolList(): Promise<ToolItem[]> {
   const res = await fetch(`${API_BASE}/api/v1/tools/list`, {
     method: 'POST',
@@ -128,7 +153,7 @@ export async function downloadMd(taskId: string): Promise<void> {
   }
 
   const disposition = res.headers.get('content-disposition')
-  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}.md`
+  const filename = parseContentDispositionFilename(disposition, `${taskId}.md`)
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
@@ -195,7 +220,7 @@ export async function downloadEpub(taskId: string): Promise<void> {
   }
 
   const disposition = res.headers.get('content-disposition')
-  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}.zip`
+  const filename = parseContentDispositionFilename(disposition, `${taskId}.zip`)
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -242,7 +267,7 @@ export async function downloadPdf(taskId: string): Promise<void> {
   }
 
   const disposition = res.headers.get('content-disposition')
-  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}.pdf`
+  const filename = parseContentDispositionFilename(disposition, `${taskId}.pdf`)
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
@@ -310,7 +335,7 @@ export async function downloadConvertedFile(taskId: string, fileIndex: number): 
   }
 
   const disposition = res.headers.get('content-disposition')
-  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `${taskId}_${fileIndex}.png`
+  const filename = parseContentDispositionFilename(disposition, `${taskId}_${fileIndex}.png`)
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
@@ -336,7 +361,7 @@ export async function downloadAllConverted(taskId: string): Promise<void> {
   }
 
   const disposition = res.headers.get('content-disposition')
-  const filename = disposition?.match(/filename="?(.+?)"?$/)?.[1] || `图片转换_${taskId}.zip`
+  const filename = parseContentDispositionFilename(disposition, `图片转换_${taskId}.zip`)
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
