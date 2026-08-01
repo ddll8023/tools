@@ -5,6 +5,7 @@ import os
 import posixpath
 import re
 import shutil
+import uuid
 import zipfile
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
