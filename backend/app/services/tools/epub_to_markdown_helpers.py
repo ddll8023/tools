@@ -28,6 +28,7 @@ MAX_ENTRY_COUNT = 10_000
 MAX_UNCOMPRESSED_SIZE = 200 * 1024 * 1024
 MAX_ENTRY_SIZE = 50 * 1024 * 1024
 TEMP_UPLOADS_DIR = os.path.join(TEMP_DIR, "uploads")
+CHAPTER_COUNT_FILE = "chapter_count.txt"
 
 _XML_NS = {
     "container": "urn:oasis:names:tc:opendocument:xmlns:container",
@@ -205,6 +206,18 @@ def _ncx_links(root_dir: str, manifest: dict[str, tuple[str, str, str]]) -> list
     return []
 
 
+def _extract_body_content(content: str) -> str:
+    """只返回 XHTML/HTML 的 body 内容，避免把 XML 声明和 head 元数据当正文。"""
+    body_match = re.search(r"<body\b[^>]*>(.*?)</body\s*>", content, re.IGNORECASE | re.DOTALL)
+    if body_match:
+        return body_match.group(1)
+
+    # 少数 EPUB 页面没有完整的 body 标签，仍需去掉 head，避免泄漏 title、style 等元数据。
+    content = re.sub(r"<head\b[^>]*>.*?</head\s*>", "", content, flags=re.IGNORECASE | re.DOTALL)
+    content = re.sub(r"<\?(?:xml)\b[^>]*\?>", "", content, flags=re.IGNORECASE)
+    return re.sub(r"</?(?:html|body)\b[^>]*>", "", content, flags=re.IGNORECASE)
+
+
 def _replace_image_links(content: str, chapter_member: str, root_dir: str, images_dir: str, image_map: dict[str, str]) -> str:
     base = posixpath.dirname(chapter_member)
 
@@ -248,34 +261,50 @@ def convert_epub(root_dir: str) -> tuple[str, int, int, int, str]:
     container_path = os.path.join(root_dir, "META-INF", "container.xml")
     if not os.path.isfile(container_path):
         _reject("EPUB 缺少 container.xml")
-    spine, manifest, title, opf_member = _parse_package(root_dir)
+    spine, _, title, _ = _parse_package(root_dir)
     if not spine:
         _reject("EPUB 缺少可解析的章节")
-    # Preserve reading order from OPF spine; nav/NCX are supplementary metadata.
+    # OPF spine defines the EPUB default reading order; nav/NCX are navigation metadata.
     output_dir = os.path.dirname(root_dir)
     images_dir = os.path.join(output_dir, "output", "images")
     os.makedirs(images_dir, exist_ok=True)
     image_map: dict[str, str] = {}
     chapters: list[str] = []
-    spine_members = {member for member, _ in spine}
-    order = [member for member in _nav_members(root_dir, manifest) if member in spine_members]
-    if not order:
-        order = [member for member in _ncx_links(root_dir, manifest) if member in spine_members]
-    spine = _ordered_spine(spine, order)
-    for index, (member, _) in enumerate(spine, 1):
+    for member, _ in spine:
         content = _read_member(root_dir, member)
+        content = _extract_body_content(content)
         content = _replace_image_links(content, member, root_dir, images_dir, image_map)
         markdown = markdownify(content, heading_style="ATX", strip=["script", "style", "noscript"])
         markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip()
         if markdown:
-            chapters.append(f"## 第 {index} 章\n\n{markdown}")
+            chapters.append(markdown)
     full_markdown = "\n\n---\n\n".join(chapters)
-    if title and not re.match(r"^#", full_markdown):
-        full_markdown = f"# {title}\n\n{full_markdown}" if full_markdown else f"# {title}"
+    if title:
+        normalized_title = re.sub(r"\s+", " ", title).strip()
+        first_heading = re.match(r"^#{1,6}\s+(.+?)\s*$", full_markdown)
+        has_title_heading = first_heading and first_heading.group(1).strip() == normalized_title
+        if not has_title_heading:
+            full_markdown = f"# {normalized_title}\n\n{full_markdown}" if full_markdown else f"# {normalized_title}"
     output_path = os.path.join(os.path.dirname(root_dir), "output.md")
     with open(output_path, "w", encoding="utf-8") as stream:
         stream.write(full_markdown)
     return full_markdown, len(chapters), _count_tables(full_markdown), len(image_map), title
+
+
+def _read_chapter_count(task_dir: str, markdown: str) -> int:
+    """读取转换时记录的章节数，旧任务则按分隔线回退计算。"""
+    count_path = os.path.join(task_dir, CHAPTER_COUNT_FILE)
+    try:
+        with open(count_path, encoding="utf-8") as stream:
+            chapter_count = int(stream.read().strip())
+        if chapter_count >= 0:
+            return chapter_count
+    except (OSError, ValueError):
+        pass
+
+    if not markdown.strip():
+        return 0
+    return markdown.count("\n\n---\n\n") + 1
 
 
 def _task_path(task_id: str) -> str:
@@ -304,7 +333,7 @@ def get_preview_detail(task_id: str) -> GetPreviewResponse:
     image_count = len([name for name in os.listdir(images_dir)]) if os.path.isdir(images_dir) else 0
     return GetPreviewResponse(
         markdown_content=markdown,
-        chapter_count=markdown.count("## 第 "),
+        chapter_count=_read_chapter_count(task_dir, markdown),
         table_count=_count_tables(markdown),
         image_count=image_count,
         filename=filename,

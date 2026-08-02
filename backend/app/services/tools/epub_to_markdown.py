@@ -9,6 +9,7 @@ from fastapi import UploadFile
 from app.schemas.response import ErrorCode
 from app.schemas.tools.epub_to_markdown import ConvertResponse
 from app.services.tools.epub_to_markdown_helpers import (
+    CHAPTER_COUNT_FILE,
     TEMP_UPLOADS_DIR,
     convert_epub,
     create_download_zip,
@@ -49,6 +50,8 @@ def convert_epub_file(file: UploadFile) -> ConvertResponse:
         _, chapter_count, _, image_count, _ = convert_epub(extract_dir)
         with open(os.path.join(task_dir, "meta.txt"), "w", encoding="utf-8") as stream:
             stream.write(filename)
+        with open(os.path.join(task_dir, CHAPTER_COUNT_FILE), "w", encoding="utf-8") as stream:
+            stream.write(str(chapter_count))
     except ServiceException:
         shutil.rmtree(task_dir, ignore_errors=True)
         raise
