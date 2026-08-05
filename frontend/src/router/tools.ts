@@ -11,6 +11,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'file-pdf'],
     component: () => import('@/views/tools/PdfToMarkdown.vue'),
   },
+  'pdf-to-word': {
+    icon: ['fas', 'file-word'],
+    component: () => import('@/views/tools/PdfToWord.vue'),
+  },
   'word-to-pdf': {
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/WordToPdf.vue'),

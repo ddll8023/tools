@@ -13,6 +13,15 @@ export interface ConvertResponse {
   page_count?: number
 }
 
+export interface PdfToWordConvertResponse {
+  task_id: string
+  filename: string
+  output_filename: string
+  page_count: number
+  engine: 'pdf2docx'
+  warnings: string[]
+}
+
 export interface PreviewResponse {
   markdown_content: string
   page_count: number
@@ -163,6 +172,56 @@ export async function downloadMd(taskId: string): Promise<void> {
   a.download = filename
   a.click()
 
+  URL.revokeObjectURL(url)
+}
+
+/* ════════════════════════════════════════
+   PDF 转 Word API
+   ════════════════════════════════════════ */
+
+export async function convertPdfToWord(file: File): Promise<PdfToWordConvertResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-word/convert`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  const json: ApiResponse<PdfToWordConvertResponse> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '转换失败')
+  }
+
+  return json.data as PdfToWordConvertResponse
+}
+
+export async function downloadWord(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-word/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '下载失败')
+    }
+    throw new Error(`下载失败（HTTP ${res.status}）`)
+  }
+
+  const disposition = res.headers.get('content-disposition')
+  const filename = parseContentDispositionFilename(disposition, `${taskId}.docx`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
 

@@ -23,6 +23,15 @@ _TOOLS = [
         available=True,
     ),
     ToolListItem(
+        id="pdf-to-word",
+        name="PdfToWord",
+        path="pdf-to-word",
+        display_name="PDF 转 Word",
+        description="将包含文字层的 PDF 文件转换为可编辑的 Word 文档",
+        icon="fas fa-file-word",
+        available=True,
+    ),
+    ToolListItem(
         id="image-converter",
         name="ImageConverter",
         path="image-converter",
