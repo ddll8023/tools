@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "pymupdf>=1.27.2.3",
     "python-multipart>=0.0.32",
+    "reportlab>=5.0.0",
     "shapely>=2.1.2",
     "transformers>=4.57,<4.58",
     "ultralytics>=8.4.75",

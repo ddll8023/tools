@@ -49,6 +49,15 @@ _TOOLS = [
         icon="fas fa-book",
         available=True,
     ),
+    ToolListItem(
+        id="qr-code",
+        name="QrCode",
+        path="qr-code",
+        display_name="文本/文件转二维码",
+        description="将文本或小文件生成可预览、可下载的二维码图片",
+        icon="fas fa-qrcode",
+        available=True,
+    ),
 ]
 
 

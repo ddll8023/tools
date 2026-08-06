@@ -13,6 +13,13 @@ export interface ConvertResponse {
   page_count?: number
 }
 
+export interface QrCodeResponse {
+  image_data_url: string
+  filename: string
+  source_type: 'text' | 'file'
+  payload_size: number
+}
+
 export interface PdfToWordConvertResponse {
   task_id: string
   filename: string
@@ -82,6 +89,34 @@ function parseContentDispositionFilename(
     /filename=([^;]+)/i.exec(disposition)
   if (plain) return plain[1].trim()
   return fallback
+}
+
+export async function generateQrCode(
+  content?: string,
+  file?: File,
+): Promise<QrCodeResponse> {
+  if ((content === undefined) === (file === undefined)) {
+    throw new Error('请提供文本或文件，且只能选择一种内容')
+  }
+
+  const formData = new FormData()
+  if (file !== undefined) {
+    formData.append('file', file)
+  } else {
+    formData.append('content', content ?? '')
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/qr-code/generate`, {
+    method: 'POST',
+    body: formData,
+  })
+  const json: ApiResponse<QrCodeResponse> = await res.json()
+
+  if (json.code !== 0) {
+    throw new Error(json.message || '二维码生成失败')
+  }
+
+  return json.data as QrCodeResponse
 }
 
 export async function fetchToolList(): Promise<ToolItem[]> {

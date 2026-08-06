@@ -10,7 +10,7 @@ import {
   faSpinner, faTable, faArrowLeft,
   faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
   faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper, faBook,
-  faTriangleExclamation,
+  faTriangleExclamation, faQrcode,
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
@@ -28,7 +28,7 @@ library.add(
   faCopy, faTable, faImageRegular, faSpinner, faArrowLeft,
   faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
   faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper, faBook,
-  faTriangleExclamation, faFileImage,
+  faTriangleExclamation, faFileImage, faQrcode,
 )
 
 import '@/style.css'

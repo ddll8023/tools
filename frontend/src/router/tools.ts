@@ -27,6 +27,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'image'],
     component: () => import('@/views/tools/ImageConverter.vue'),
   },
+  'qr-code': {
+    icon: ['fas', 'qrcode'],
+    component: () => import('@/views/tools/QrCode.vue'),
+  },
 }
 
 /** 从后端获取工具列表并与本地注册表合并 */
