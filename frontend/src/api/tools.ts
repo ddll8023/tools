@@ -473,6 +473,17 @@ export async function downloadAllConverted(taskId: string): Promise<void> {
    证件照 API
    ════════════════════════════════════════ */
 
+export interface IdPhotoTemplateItem {
+  id: string
+  label: string
+  description: string
+  width: number | null
+  height: number | null
+  width_mm: number | null
+  height_mm: number | null
+  is_custom: boolean
+}
+
 export interface IdPhotoFileItem {
   kind: 'standard' | 'hd' | 'layout'
   filename: string
@@ -496,6 +507,9 @@ export interface IdPhotoResponse {
 
 export interface IdPhotoRenderParams {
   task_id: string
+  template_id: string
+  width: number | null
+  height: number | null
   background_color: string
   crop_scale: number
   offset_x: number
@@ -504,6 +518,17 @@ export interface IdPhotoRenderParams {
   quality: number
   dpi: number
   max_file_size_kb: number | null
+}
+
+export async function fetchIdPhotoTemplates(): Promise<IdPhotoTemplateItem[]> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/templates`, {
+    method: 'POST',
+  })
+  const json: ApiResponse<IdPhotoTemplateItem[]> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '照片规格加载失败')
+  }
+  return json.data || []
 }
 
 export async function processIdPhoto(

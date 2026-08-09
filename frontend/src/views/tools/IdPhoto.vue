@@ -1,26 +1,24 @@
 <!--
   证件照工具页
-  功能描述：上传单人照片 → 选择规格和背景 → 本地处理 → 微调与下载
+  功能描述：上传单人照片 → 本地处理 → 原图/成片对照 → 切换规格、微调与下载
 -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   downloadIdPhotoFile,
   fetchIdPhotoFile,
+  fetchIdPhotoTemplates,
   processIdPhoto,
   renderIdPhoto,
 } from '@/api/tools'
-import type { IdPhotoFileItem, IdPhotoResponse } from '@/api/tools'
+import type {
+  IdPhotoFileItem,
+  IdPhotoRenderParams,
+  IdPhotoResponse,
+  IdPhotoTemplateItem,
+} from '@/api/tools'
 
 type PageState = 'upload' | 'processing' | 'result' | 'error'
-
-type TemplateOption = {
-  id: string
-  label: string
-  description: string
-  width?: number
-  height?: number
-}
 
 type BackgroundOption = {
   value: string
@@ -28,37 +26,14 @@ type BackgroundOption = {
   swatch: string
 }
 
+type CropSettings = {
+  cropScale: number
+  offsetX: number
+  offsetY: number
+}
+
 const MAX_FILE_SIZE = 20 * 1024 * 1024
 const ACCEPTED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp']
-
-const templates: TemplateOption[] = [
-  {
-    id: 'one-inch',
-    label: '一寸',
-    description: '25×35 mm · 295×413 px',
-    width: 295,
-    height: 413,
-  },
-  {
-    id: 'small-two-inch',
-    label: '小二寸',
-    description: '35×45 mm · 413×531 px',
-    width: 413,
-    height: 531,
-  },
-  {
-    id: 'two-inch',
-    label: '二寸',
-    description: '35×49 mm · 413×579 px',
-    width: 413,
-    height: 579,
-  },
-  {
-    id: 'custom',
-    label: '自定义',
-    description: '输入目标像素尺寸',
-  },
-]
 
 const backgrounds: BackgroundOption[] = [
   { value: 'white', label: '白色', swatch: '#FFFFFF' },
@@ -68,6 +43,9 @@ const backgrounds: BackgroundOption[] = [
 ]
 
 const fileInput = ref<HTMLInputElement | null>(null)
+const templates = ref<IdPhotoTemplateItem[]>([])
+const isLoadingTemplates = ref(true)
+const templateLoadError = ref('')
 const currentState = ref<PageState>('upload')
 const errorMessage = ref('')
 const renderError = ref('')
@@ -86,10 +64,16 @@ const offsetX = ref(0)
 const offsetY = ref(0)
 const taskId = ref('')
 const result = ref<IdPhotoResponse | null>(null)
+const originalPreviewUrl = ref<string | null>(null)
 const previewUrl = ref<string | null>(null)
 const isRendering = ref(false)
+const appliedSettingsSignature = ref('')
+const cropSettingsByTemplate = new Map<string, CropSettings>()
 let operationId = 0
 
+const selectedTemplate = computed(() =>
+  templates.value.find((template) => template.id === templateId.value),
+)
 const selectedBackground = computed(() =>
   backgroundSelection.value === 'custom'
     ? customColor.value.toUpperCase()
@@ -98,17 +82,144 @@ const selectedBackground = computed(() =>
 const maxFileSizeLimit = computed(() =>
   maxFileSizeKb.value > 0 ? maxFileSizeKb.value : undefined,
 )
-const canProcess = computed(() => {
-  if (!selectedFile.value || currentState.value === 'processing') return false
-  if (templateId.value !== 'custom') return true
-  return (
-    Number.isInteger(customWidth.value) &&
-    Number.isInteger(customHeight.value) &&
-    customWidth.value >= 80 &&
-    customHeight.value >= 80 &&
-    customWidth.value < customHeight.value
-  )
-})
+const hasValidCustomSize = computed(() =>
+  Number.isInteger(customWidth.value) &&
+  Number.isInteger(customHeight.value) &&
+  customWidth.value >= 80 &&
+  customWidth.value <= 3000 &&
+  customHeight.value >= 80 &&
+  customHeight.value <= 3000 &&
+  customWidth.value < customHeight.value,
+)
+const hasValidTemplate = computed(() =>
+  Boolean(selectedTemplate.value) &&
+  (templateId.value !== 'custom' || hasValidCustomSize.value),
+)
+const hasValidOutputSettings = computed(() =>
+  Number.isInteger(quality.value) &&
+  quality.value >= 60 &&
+  quality.value <= 100 &&
+  Number.isInteger(dpi.value) &&
+  dpi.value >= 72 &&
+  dpi.value <= 600 &&
+  Number.isInteger(maxFileSizeKb.value) &&
+  (maxFileSizeKb.value === 0 ||
+    (maxFileSizeKb.value >= 10 && maxFileSizeKb.value <= 2048)),
+)
+const canProcess = computed(() =>
+  Boolean(selectedFile.value) &&
+  currentState.value !== 'processing' &&
+  !isLoadingTemplates.value &&
+  hasValidTemplate.value &&
+  hasValidOutputSettings.value,
+)
+const canRender = computed(() =>
+  Boolean(taskId.value && result.value) &&
+  hasValidTemplate.value &&
+  hasValidOutputSettings.value,
+)
+const hasPendingChanges = computed(() =>
+  currentState.value === 'result' &&
+  Boolean(appliedSettingsSignature.value) &&
+  renderSettingsSignature(buildRenderParams()) !== appliedSettingsSignature.value,
+)
+
+function templateSettingsKey(id = templateId.value): string {
+  return id === 'custom'
+    ? `${id}:${customWidth.value}x${customHeight.value}`
+    : id
+}
+
+function applyCropSettings(settings?: CropSettings) {
+  cropScale.value = settings?.cropScale ?? 1
+  offsetX.value = settings?.offsetX ?? 0
+  offsetY.value = settings?.offsetY ?? 0
+}
+
+function rememberCropSettings(key = templateSettingsKey()) {
+  cropSettingsByTemplate.set(key, {
+    cropScale: cropScale.value,
+    offsetX: offsetX.value,
+    offsetY: offsetY.value,
+  })
+}
+
+function selectTemplate(nextTemplateId: string) {
+  if (nextTemplateId === templateId.value) return
+  rememberCropSettings()
+  templateId.value = nextTemplateId
+  applyCropSettings(cropSettingsByTemplate.get(templateSettingsKey(nextTemplateId)))
+  renderError.value = ''
+}
+
+function handleCustomSizeChange() {
+  applyCropSettings(cropSettingsByTemplate.get(templateSettingsKey()))
+  renderError.value = ''
+}
+
+function buildRenderParams(): IdPhotoRenderParams {
+  const isCustom = templateId.value === 'custom'
+  return {
+    task_id: taskId.value,
+    template_id: templateId.value,
+    width: isCustom ? customWidth.value : null,
+    height: isCustom ? customHeight.value : null,
+    background_color: selectedBackground.value,
+    crop_scale: cropScale.value,
+    offset_x: offsetX.value,
+    offset_y: offsetY.value,
+    include_layout: includeLayout.value,
+    quality: quality.value,
+    dpi: dpi.value,
+    max_file_size_kb: maxFileSizeLimit.value ?? null,
+  }
+}
+
+function renderSettingsSignature(params: IdPhotoRenderParams): string {
+  return JSON.stringify({
+    template_id: params.template_id,
+    width: params.width,
+    height: params.height,
+    background_color: params.background_color,
+    crop_scale: params.crop_scale,
+    offset_x: params.offset_x,
+    offset_y: params.offset_y,
+    include_layout: params.include_layout,
+    quality: params.quality,
+    dpi: params.dpi,
+    max_file_size_kb: params.max_file_size_kb,
+  })
+}
+
+function releaseOriginalPreview() {
+  if (!originalPreviewUrl.value) return
+  URL.revokeObjectURL(originalPreviewUrl.value)
+  originalPreviewUrl.value = null
+}
+
+function releaseResultPreview() {
+  if (!previewUrl.value) return
+  URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = null
+}
+
+async function loadTemplates() {
+  isLoadingTemplates.value = true
+  templateLoadError.value = ''
+  try {
+    const loadedTemplates = await fetchIdPhotoTemplates()
+    if (loadedTemplates.length === 0) throw new Error('没有可用的照片规格')
+    templates.value = loadedTemplates
+    if (!loadedTemplates.some((template) => template.id === templateId.value)) {
+      templateId.value = loadedTemplates[0].id
+    }
+  } catch (error) {
+    templates.value = []
+    templateLoadError.value = getErrorMessage(error, '照片规格加载失败，请重试')
+  } finally {
+    isLoadingTemplates.value = false
+  }
+}
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
@@ -139,7 +250,16 @@ function chooseFile(file: File) {
     currentState.value = 'error'
     return
   }
+
+  operationId += 1
+  releaseOriginalPreview()
+  releaseResultPreview()
   selectedFile.value = file
+  originalPreviewUrl.value = URL.createObjectURL(file)
+  taskId.value = ''
+  result.value = null
+  appliedSettingsSignature.value = ''
+  isRendering.value = false
   errorMessage.value = ''
   renderError.value = ''
   currentState.value = 'upload'
@@ -196,10 +316,14 @@ async function handleProcess() {
     )
     if (currentOperation !== operationId) return
 
+    await loadPreview(processed, currentOperation)
+    if (currentOperation !== operationId) return
+
     result.value = processed
     taskId.value = processed.task_id
-    await loadPreview(processed, currentOperation)
-    if (currentOperation === operationId) currentState.value = 'result'
+    appliedSettingsSignature.value = renderSettingsSignature(buildRenderParams())
+    rememberCropSettings()
+    currentState.value = 'result'
   } catch (error) {
     if (currentOperation !== operationId) return
     errorMessage.value = getErrorMessage(error, '证件照处理失败，请重试')
@@ -208,28 +332,30 @@ async function handleProcess() {
 }
 
 async function handleRender() {
-  if (!taskId.value || !result.value || isRendering.value) return
+  if (!canRender.value || isRendering.value || !hasPendingChanges.value) return
 
+  const params = buildRenderParams()
   const currentOperation = ++operationId
   isRendering.value = true
   renderError.value = ''
 
   try {
-    const rendered = await renderIdPhoto({
-      task_id: taskId.value,
-      background_color: selectedBackground.value,
-      crop_scale: cropScale.value,
-      offset_x: offsetX.value,
-      offset_y: offsetY.value,
-      include_layout: includeLayout.value,
-      quality: quality.value,
-      dpi: dpi.value,
-      max_file_size_kb: maxFileSizeLimit.value ?? null,
-    })
+    const rendered = await renderIdPhoto(params)
+    if (currentOperation !== operationId) return
+
+    await loadPreview(rendered, currentOperation)
     if (currentOperation !== operationId) return
 
     result.value = rendered
-    await loadPreview(rendered, currentOperation)
+    appliedSettingsSignature.value = renderSettingsSignature(params)
+    const settingsKey = params.template_id === 'custom'
+      ? `custom:${params.width}x${params.height}`
+      : params.template_id
+    cropSettingsByTemplate.set(settingsKey, {
+      cropScale: params.crop_scale,
+      offsetX: params.offset_x,
+      offsetY: params.offset_y,
+    })
   } catch (error) {
     if (currentOperation === operationId) {
       renderError.value = getErrorMessage(error, '重新渲染失败，请重试')
@@ -263,26 +389,31 @@ function resetUpload() {
   taskId.value = ''
   result.value = null
   isRendering.value = false
+  appliedSettingsSignature.value = ''
+  cropSettingsByTemplate.clear()
   quality.value = 95
   dpi.value = 300
   maxFileSizeKb.value = 0
   cropScale.value = 1
   offsetX.value = 0
   offsetY.value = 0
-  if (previewUrl.value) {
-    URL.revokeObjectURL(previewUrl.value)
-    previewUrl.value = null
-  }
+  releaseOriginalPreview()
+  releaseResultPreview()
 }
+
+onMounted(() => {
+  void loadTemplates()
+})
 
 onBeforeUnmount(() => {
   operationId += 1
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  releaseOriginalPreview()
+  releaseResultPreview()
 })
 </script>
 
 <template>
-  <main class="mx-auto w-full max-w-[900px] py-7">
+  <main class="mx-auto w-full max-w-[1100px] py-7">
     <section class="mb-5 rounded-2xl border border-border bg-surface p-8">
       <div class="mb-[18px] text-[13px] font-semibold uppercase tracking-[0.5px] text-text-secondary">
         <font-awesome-icon :icon="['fas', 'id-card']" class="mr-1.5" />
@@ -345,17 +476,24 @@ onBeforeUnmount(() => {
 
       <fieldset>
         <legend class="mb-2 text-[13px] font-medium">照片规格</legend>
-        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div v-if="isLoadingTemplates" class="rounded-lg border border-border px-4 py-3 text-[13px] text-text-secondary" role="status">
+          正在加载照片规格……
+        </div>
+        <div v-else-if="templateLoadError" class="flex items-center gap-3 rounded-lg border border-[#FFD7D7] bg-[#FFF5F5] px-4 py-3 text-[13px] text-error" role="alert">
+          <span class="flex-1">{{ templateLoadError }}</span>
+          <button type="button" class="font-medium text-primary hover:text-primary-dark" @click="loadTemplates">重试</button>
+        </div>
+        <div v-else class="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <button
             v-for="template in templates"
             :key="template.id"
             type="button"
-            class="rounded-lg border px-3 py-2.5 text-left transition-all duration-200"
+            class="rounded-lg border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             :class="templateId === template.id
               ? 'border-primary bg-primary text-white'
               : 'border-border text-text-secondary hover:border-[#999] hover:text-text'"
             :aria-pressed="templateId === template.id"
-            @click="templateId = template.id"
+            @click="selectTemplate(template.id)"
           >
             <span class="block text-[13px] font-medium">{{ template.label }}</span>
             <span class="mt-0.5 block text-[11px] opacity-75">{{ template.description }}</span>
@@ -372,6 +510,7 @@ onBeforeUnmount(() => {
             min="80"
             max="3000"
             class="mt-2 w-full rounded-lg border border-border bg-transparent px-3 py-2 font-normal outline-none focus:border-primary"
+            @change="handleCustomSizeChange"
           />
         </label>
         <label class="text-[13px] font-medium">
@@ -382,9 +521,13 @@ onBeforeUnmount(() => {
             min="80"
             max="3000"
             class="mt-2 w-full rounded-lg border border-border bg-transparent px-3 py-2 font-normal outline-none focus:border-primary"
+            @change="handleCustomSizeChange"
           />
         </label>
       </div>
+      <p v-if="templateId === 'custom' && !hasValidCustomSize" class="mt-2 text-[12px] text-error" role="alert">
+        自定义规格需为 80～3000 px 的纵向尺寸。
+      </p>
 
       <fieldset class="mt-5">
         <legend class="mb-2 text-[13px] font-medium">背景色</legend>
@@ -449,6 +592,9 @@ onBeforeUnmount(() => {
         </label>
       </div>
       <p class="mt-2 text-[11px] text-text-tertiary">文件大小上限为可选压缩目标，0 表示不限制。</p>
+      <p v-if="!hasValidOutputSettings" class="mt-1 text-[12px] text-error" role="alert">
+        JPEG 质量需为 60～100，DPI 为 72～600，文件上限为 0 或 10～2048KB。
+      </p>
 
       <label class="mt-5 flex cursor-pointer items-center gap-2 text-[13px] text-text-secondary">
         <input v-model="includeLayout" type="checkbox" class="h-4 w-4 accent-primary" />
@@ -494,25 +640,91 @@ onBeforeUnmount(() => {
         生成完成
       </div>
 
-      <div class="grid gap-6 md:grid-cols-[minmax(0,1fr)_280px]">
+      <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div>
-          <div class="flex min-h-[360px] items-center justify-center rounded-xl bg-[#F4F4F0] p-5">
-            <img
-              v-if="previewUrl"
-              :src="previewUrl"
-              :alt="`${result.template_name} ${result.background_color} 背景预览`"
-              class="max-h-[520px] max-w-full rounded-md border border-border object-contain shadow-sm"
-            />
-            <span v-else class="text-sm text-text-tertiary">预览加载中……</span>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <figure class="overflow-hidden rounded-xl border border-border bg-[#F4F4F0]">
+              <figcaption class="border-b border-border bg-surface px-4 py-2.5 text-[12px] font-medium text-text-secondary">
+                原始照片
+              </figcaption>
+              <div class="flex min-h-[360px] items-center justify-center p-4">
+                <img
+                  v-if="originalPreviewUrl"
+                  :src="originalPreviewUrl"
+                  alt="用户选择的原始照片"
+                  class="max-h-[500px] max-w-full rounded-md object-contain"
+                />
+                <span v-else class="text-sm text-text-tertiary">原图不可用</span>
+              </div>
+            </figure>
+            <figure class="overflow-hidden rounded-xl border border-border bg-[#F4F4F0]" :aria-busy="isRendering">
+              <figcaption class="flex items-center justify-between border-b border-border bg-surface px-4 py-2.5 text-[12px] font-medium text-text-secondary">
+                <span>证件照成片</span>
+                <span v-if="isRendering" role="status" class="text-primary">更新中……</span>
+              </figcaption>
+              <div class="flex min-h-[360px] items-center justify-center p-4">
+                <img
+                  v-if="previewUrl"
+                  :src="previewUrl"
+                  :alt="`${result.template_name} ${result.background_color} 背景预览`"
+                  class="max-h-[500px] max-w-full rounded-md border border-border object-contain shadow-sm"
+                />
+                <span v-else class="text-sm text-text-tertiary">预览加载中……</span>
+              </div>
+            </figure>
           </div>
           <p class="mt-3 text-[12px] leading-relaxed text-text-tertiary">
             当前输出：{{ result.template_name }}，{{ result.width }}×{{ result.height }} px，背景 {{ result.background_color }}。结果仅按所选模板生成，不代表目标机构的最终合规结论。
           </p>
         </div>
 
-        <div class="space-y-4">
+        <aside class="space-y-4" aria-label="证件照结果设置">
           <div>
-            <h2 class="mb-2 text-[13px] font-semibold">结果微调</h2>
+            <label class="mb-2 block text-[12px] font-medium" for="result-template">照片规格</label>
+            <select
+              id="result-template"
+              :value="templateId"
+              class="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-[13px] outline-none focus:border-primary"
+              @change="selectTemplate(($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="template in templates" :key="template.id" :value="template.id">
+                {{ template.label }} · {{ template.description }}
+              </option>
+            </select>
+            <div v-if="templateId === 'custom'" class="mt-2 grid grid-cols-2 gap-2">
+              <label class="text-[11px] text-text-secondary">
+                宽度（px）
+                <input
+                  v-model.number="customWidth"
+                  type="number"
+                  min="80"
+                  max="3000"
+                  class="mt-1 w-full rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-[13px] outline-none focus:border-primary"
+                  @change="handleCustomSizeChange"
+                />
+              </label>
+              <label class="text-[11px] text-text-secondary">
+                高度（px）
+                <input
+                  v-model.number="customHeight"
+                  type="number"
+                  min="80"
+                  max="3000"
+                  class="mt-1 w-full rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-[13px] outline-none focus:border-primary"
+                  @change="handleCustomSizeChange"
+                />
+              </label>
+            </div>
+            <p v-if="templateId === 'custom' && !hasValidCustomSize" class="mt-1.5 text-[11px] text-error" role="alert">
+              请输入 80～3000 px 的纵向尺寸。
+            </p>
+            <p v-else-if="selectedTemplate" class="mt-1.5 text-[11px] text-text-tertiary">
+              {{ selectedTemplate.description }}
+            </p>
+          </div>
+
+          <div>
+            <h2 class="mb-2 text-[13px] font-semibold">构图微调</h2>
             <label class="block text-[12px] text-text-secondary">
               裁切范围：{{ Math.round(cropScale * 100) }}%
               <input
@@ -552,7 +764,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div>
-            <label class="mb-2 block text-[12px] font-medium" for="result-background">重新选择背景色</label>
+            <label class="mb-2 block text-[12px] font-medium" for="result-background">背景色</label>
             <select
               id="result-background"
               v-model="backgroundSelection"
@@ -571,7 +783,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="mt-4 grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-2 gap-3">
             <label class="text-[12px] text-text-secondary">
               JPEG 质量：{{ quality }}
               <input v-model.number="quality" type="range" min="60" max="100" class="mt-2 w-full cursor-pointer accent-primary" />
@@ -586,16 +798,30 @@ onBeforeUnmount(() => {
             </label>
           </div>
 
+          <p v-if="!hasValidOutputSettings" class="text-[11px] text-error" role="alert">
+            请检查 JPEG 质量、DPI 或文件大小上限。
+          </p>
+
+          <label class="flex cursor-pointer items-center gap-2 text-[12px] text-text-secondary">
+            <input v-model="includeLayout" type="checkbox" class="h-4 w-4 accent-primary" />
+            同时生成六寸排版照
+          </label>
+
+          <p v-if="hasPendingChanges" class="rounded-lg bg-primary-light px-3 py-2 text-[12px] text-primary-dark" role="status">
+            参数已修改；当前下载列表仍对应上一次成功结果。
+          </p>
+          <p v-else class="text-[11px] text-text-tertiary">当前预览已应用全部设置。</p>
+
           <button
             type="button"
             class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-primary px-4 py-2 text-[13px] font-medium text-primary transition-all duration-200 hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="isRendering"
+            :disabled="isRendering || !canRender || !hasPendingChanges"
             @click="handleRender"
           >
             <font-awesome-icon :icon="['fas', 'rotate']" :spin="isRendering" />
-            {{ isRendering ? '正在更新结果……' : '应用调整' }}
+            {{ isRendering ? '正在更新结果……' : '更新预览' }}
           </button>
-        </div>
+        </aside>
       </div>
 
       <div v-if="renderError" class="mt-4 rounded-lg border border-[#FFD7D7] bg-[#FFF5F5] p-3 text-[13px] text-error" role="alert">
@@ -616,7 +842,7 @@ onBeforeUnmount(() => {
           <span class="text-text-secondary">{{ formatSize(file.file_size) }}</span>
           <button
             type="button"
-            class="cursor-pointer text-primary transition-all duration-200 hover:text-primary-dark"
+            class="cursor-pointer text-primary transition-all duration-200 hover:text-primary-dark disabled:cursor-not-allowed disabled:opacity-40"
             :disabled="isRendering"
             :aria-label="`下载${fileLabel(file)}`"
             @click="handleDownload(file)"

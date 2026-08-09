@@ -10,6 +10,7 @@ from app.schemas.tools.id_photo import (
     IdPhotoDownloadRequest,
     IdPhotoRenderRequest,
     IdPhotoResponse,
+    IdPhotoTemplateItem,
 )
 from app.services.tools import id_photo as services_id_photo
 from app.utils.exception import ServiceException
@@ -18,6 +19,12 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/tools/id-photo", tags=["id-photo"])
+
+
+@router.post("/templates", response_model=ApiResponse[list[IdPhotoTemplateItem]])
+def list_id_photo_templates():
+    """返回证件照预设规格。"""
+    return success(data=services_id_photo.list_templates())
 
 
 @router.post("/process", response_model=ApiResponse[IdPhotoResponse])
@@ -57,6 +64,9 @@ def render_id_photo(body: IdPhotoRenderRequest):
     try:
         result = services_id_photo.render_id_photo(
             task_id=body.task_id,
+            template_id=body.template_id.value,
+            width=body.width,
+            height=body.height,
             background_color=body.background_color,
             crop_scale=body.crop_scale,
             offset_x=body.offset_x,

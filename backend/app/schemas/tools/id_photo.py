@@ -14,6 +14,19 @@ class IdPhotoTemplate(str, Enum):
     CUSTOM = "custom"
 
 
+class IdPhotoTemplateItem(BaseModel):
+    """可选择的证件照规格"""
+
+    id: str = Field(..., description="规格 ID")
+    label: str = Field(..., description="规格显示名称")
+    description: str = Field(..., description="规格说明")
+    width: int | None = Field(None, description="输出宽度（像素）")
+    height: int | None = Field(None, description="输出高度（像素）")
+    width_mm: int | None = Field(None, description="物理宽度（毫米）")
+    height_mm: int | None = Field(None, description="物理高度（毫米）")
+    is_custom: bool = Field(False, description="是否为自定义规格")
+
+
 class IdPhotoFileItem(BaseModel):
     """证件照任务中的单个结果文件"""
 
@@ -47,6 +60,12 @@ class IdPhotoRenderRequest(BaseModel):
     """基于已完成人像抠图任务重新渲染结果"""
 
     task_id: str = Field(..., min_length=12, max_length=12, description="任务 ID")
+    template_id: IdPhotoTemplate = Field(
+        IdPhotoTemplate.ONE_INCH,
+        description="本次渲染使用的照片规格",
+    )
+    width: int | None = Field(None, ge=80, le=3000, description="自定义宽度（像素）")
+    height: int | None = Field(None, ge=80, le=3000, description="自定义高度（像素）")
     background_color: str = Field(
         "white", min_length=1, max_length=16, description="背景色"
     )

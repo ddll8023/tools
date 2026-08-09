@@ -14,8 +14,8 @@ import shutil
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from io import BytesIO
-from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -24,7 +24,11 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import settings
 from app.schemas.response import ErrorCode
-from app.schemas.tools.id_photo import IdPhotoFileItem, IdPhotoResponse
+from app.schemas.tools.id_photo import (
+    IdPhotoFileItem,
+    IdPhotoResponse,
+    IdPhotoTemplateItem,
+)
 from app.utils.exception import ServiceException
 from app.utils.file import safe_filename
 from app.utils.logger_config import setup_logger
@@ -37,6 +41,7 @@ MAX_PIXEL_COUNT = 40_000_000
 MAX_PROCESSING_EDGE = 2000
 MAX_OUTPUT_DIMENSION = 3000
 MAX_OUTPUT_PIXEL_COUNT = 9_000_000
+MATTE_INPUT_SIZE = 512
 
 STANDARD_QUALITY = 95
 LAYOUT_WIDTH = 1795
@@ -60,17 +65,60 @@ BACKGROUND_PRESETS: dict[str, tuple[tuple[int, int, int], str]] = {
 }
 
 
-class TemplateConfig(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class TemplateConfig:
     template_id: str
+    label: str
     name: str
     width: int
     height: int
+    width_mm: int | None
+    height_mm: int | None
+    description: str
+    face_area_ratio: float = 0.20
+    eye_line_ratio: float = 0.40
+
+
+@dataclass(frozen=True, slots=True)
+class FaceDetection:
+    x: int
+    y: int
+    width: int
+    height: int
+    landmarks: tuple[tuple[int, int], ...]
 
 
 TEMPLATES: dict[str, TemplateConfig] = {
-    "one-inch": TemplateConfig("one-inch", "一寸（25×35毫米）", 295, 413),
-    "small-two-inch": TemplateConfig("small-two-inch", "小二寸（35×45毫米）", 413, 531),
-    "two-inch": TemplateConfig("two-inch", "二寸（35×49毫米）", 413, 579),
+    "one-inch": TemplateConfig(
+        "one-inch",
+        "一寸",
+        "一寸（25×35毫米）",
+        295,
+        413,
+        25,
+        35,
+        "25×35 mm · 295×413 px",
+    ),
+    "small-two-inch": TemplateConfig(
+        "small-two-inch",
+        "小二寸",
+        "小二寸（35×45毫米）",
+        413,
+        531,
+        35,
+        45,
+        "35×45 mm · 413×531 px",
+    ),
+    "two-inch": TemplateConfig(
+        "two-inch",
+        "二寸",
+        "二寸（35×49毫米）",
+        413,
+        579,
+        35,
+        49,
+        "35×49 mm · 413×579 px",
+    ),
 }
 
 _MATTE_SESSION = None
@@ -79,6 +127,31 @@ _MATTE_LOCK = threading.Lock()
 _MTCNN_INSTANCE = None
 _MTCNN_LOCK = threading.Lock()
 _RENDER_LOCK = threading.RLock()
+
+
+def list_templates() -> list[IdPhotoTemplateItem]:
+    """返回由后端统一维护的证件照规格。"""
+    presets = [
+        IdPhotoTemplateItem(
+            id=template.template_id,
+            label=template.label,
+            description=template.description,
+            width=template.width,
+            height=template.height,
+            width_mm=template.width_mm,
+            height_mm=template.height_mm,
+        )
+        for template in TEMPLATES.values()
+    ]
+    presets.append(
+        IdPhotoTemplateItem(
+            id="custom",
+            label="自定义",
+            description="输入目标像素尺寸",
+            is_custom=True,
+        )
+    )
+    return presets
 
 
 def _model_directory() -> str:
@@ -232,17 +305,21 @@ def _limit_processing_size(image: np.ndarray) -> np.ndarray:
     )
 
 
-def _detect_face(image: np.ndarray) -> tuple[int, int, int, int]:
+def _detect_face(image: np.ndarray) -> FaceDetection:
     detector = _get_mtcnn()
     height, width = image.shape[:2]
 
-    def detect(target: np.ndarray):
+    def detect(target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         try:
-            return detector.detect(
+            boxes, landmarks = detector.detect(
                 target,
                 min_face_size=20.0,
                 thresholds=[0.8, 0.8, 0.8],
                 nms_thresholds=[0.6, 0.7, 0.8],
+            )
+            return (
+                np.asarray(boxes, dtype=np.float32).reshape((-1, 5)),
+                np.asarray(landmarks, dtype=np.float32).reshape((-1, 10)),
             )
         except ValueError:
             # mtcnn-runtime 在 P-Net 没有候选框时会抛出空数组拼接异常，按未检测到人脸处理。
@@ -260,28 +337,43 @@ def _detect_face(image: np.ndarray) -> tuple[int, int, int, int]:
             (max(1, width // scale), max(1, height // scale)),
             interpolation=cv2.INTER_AREA,
         )
-        boxes, _ = detect(target)
+        boxes, landmarks = detect(target)
         if len(boxes) == 1:
-            boxes = np.asarray(boxes, dtype=np.float32) * scale
+            boxes[:, :4] *= scale
+            landmarks *= scale
         else:
-            boxes, _ = detect(image)
+            boxes, landmarks = detect(image)
     else:
-        boxes, _ = detect(image)
+        boxes, landmarks = detect(image)
 
     if len(boxes) != 1:
         raise ServiceException(
             ErrorCode.UNSUPPORTED_CONTENT,
             f"需要包含且只能包含一张主要人脸，当前检测到 {len(boxes)} 张",
         )
+    if len(landmarks) != 1:
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "人脸关键点检测结果异常")
 
     x1, y1, x2, y2 = [float(value) for value in boxes[0][:4]]
     x1 = max(0.0, min(x1, width - 1))
     y1 = max(0.0, min(y1, height - 1))
     x2 = max(x1 + 1.0, min(x2, width))
     y2 = max(y1 + 1.0, min(y2, height))
-    face_width = max(1, round(x2 - x1))
-    face_height = max(1, round(y2 - y1))
-    return round(x1), round(y1), face_width, face_height
+
+    points = tuple(
+        (
+            round(max(0.0, min(float(landmarks[0][index]), width - 1))),
+            round(max(0.0, min(float(landmarks[0][index + 5]), height - 1))),
+        )
+        for index in range(5)
+    )
+    return FaceDetection(
+        x=round(x1),
+        y=round(y1),
+        width=max(1, round(x2 - x1)),
+        height=max(1, round(y2 - y1)),
+        landmarks=points,
+    )
 
 
 def _matting(image: np.ndarray) -> tuple[np.ndarray, str]:
@@ -293,8 +385,27 @@ def _matting(image: np.ndarray) -> tuple[np.ndarray, str]:
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
 
-    model_image = cv2.resize(image, (512, 512), interpolation=cv2.INTER_AREA)
-    model_image = model_image.astype(np.float32) / 255.0
+    source_height, source_width = image.shape[:2]
+    scale = min(MATTE_INPUT_SIZE / source_width, MATTE_INPUT_SIZE / source_height)
+    resized_width = max(1, round(source_width * scale))
+    resized_height = max(1, round(source_height * scale))
+    resized = cv2.resize(
+        image,
+        (resized_width, resized_height),
+        interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC,
+    )
+    offset_x = (MATTE_INPUT_SIZE - resized_width) // 2
+    offset_y = (MATTE_INPUT_SIZE - resized_height) // 2
+    model_canvas = np.full(
+        (MATTE_INPUT_SIZE, MATTE_INPUT_SIZE, 3),
+        127,
+        dtype=np.uint8,
+    )
+    model_canvas[
+        offset_y:offset_y + resized_height,
+        offset_x:offset_x + resized_width,
+    ] = resized
+    model_image = model_canvas.astype(np.float32) / 255.0
     model_image = (model_image - 0.5) / 0.5
     model_image = np.transpose(model_image, (2, 0, 1))[None, ...].astype(np.float32)
 
@@ -309,6 +420,12 @@ def _matting(image: np.ndarray) -> tuple[np.ndarray, str]:
     matte = np.squeeze(matte)
     if matte.ndim != 2:
         raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "人像抠图模型输出格式异常")
+    if matte.shape != (MATTE_INPUT_SIZE, MATTE_INPUT_SIZE):
+        matte = cv2.resize(
+            matte,
+            (MATTE_INPUT_SIZE, MATTE_INPUT_SIZE),
+            interpolation=cv2.INTER_LINEAR,
+        )
     matte = np.nan_to_num(matte, nan=0.0, posinf=1.0, neginf=0.0)
     matte_min = float(matte.min())
     matte_max = float(matte.max())
@@ -318,11 +435,19 @@ def _matting(image: np.ndarray) -> tuple[np.ndarray, str]:
         elif matte_max > matte_min:
             matte = (matte - matte_min) / (matte_max - matte_min)
     matte = np.clip(matte, 0.0, 1.0)
-    alpha = cv2.resize(
-        (matte * 255.0).astype(np.uint8),
-        (image.shape[1], image.shape[0]),
-        interpolation=cv2.INTER_AREA,
+    matte = matte[
+        offset_y:offset_y + resized_height,
+        offset_x:offset_x + resized_width,
+    ]
+    alpha_float = cv2.resize(
+        matte,
+        (source_width, source_height),
+        interpolation=cv2.INTER_LINEAR,
     )
+    # 只清理接近全透明/全不透明的数值噪声，保留发丝的半透明过渡。
+    alpha_float[alpha_float < 0.005] = 0.0
+    alpha_float[alpha_float > 0.995] = 1.0
+    alpha = np.clip(np.rint(alpha_float * 255.0), 0, 255).astype(np.uint8)
     b, g, r = cv2.split(image)
     return cv2.merge((b, g, r, alpha)), os.path.basename(model_path)
 
@@ -348,7 +473,16 @@ def _resolve_template(
         )
     if width >= height or width * height > MAX_OUTPUT_PIXEL_COUNT:
         raise ServiceException(ErrorCode.PARAM_ERROR, "自定义证件照应为纵向且分辨率不能过高")
-    return TemplateConfig("custom", f"自定义（{width}×{height}像素）", width, height)
+    return TemplateConfig(
+        template_id="custom",
+        label="自定义",
+        name=f"自定义（{width}×{height}像素）",
+        width=width,
+        height=height,
+        width_mm=None,
+        height_mm=None,
+        description=f"{width}×{height} px",
+    )
 
 
 def _resolve_background(value: str) -> tuple[tuple[int, int, int], str]:
@@ -380,34 +514,55 @@ def _validate_render_settings(
         raise ServiceException(ErrorCode.PARAM_ERROR, "文件大小上限必须在 10～2048KB 之间")
 
 
+def _find_head_top(image: np.ndarray, face: FaceDetection) -> int | None:
+    """在脸部附近的 Alpha 轮廓中寻找头顶，过滤远离人物的遮罩噪点。"""
+    alpha = image[:, :, 3]
+    left = max(0, face.x - face.width // 2)
+    right = min(image.shape[1], face.x + round(face.width * 1.5))
+    bottom = min(image.shape[0], face.y + face.height)
+    if left >= right or bottom <= 0:
+        return None
+    row_counts = np.count_nonzero(alpha[:bottom, left:right] >= 48, axis=1)
+    minimum_width = max(2, round(face.width * 0.08))
+    rows = np.where(row_counts >= minimum_width)[0]
+    return int(rows[0]) if rows.size else None
+
+
 def _calculate_crop(
-    face: tuple[int, int, int, int],
+    face: FaceDetection,
     template: TemplateConfig,
     crop_scale: float,
     offset_x: float,
     offset_y: float,
+    head_top: int | None = None,
 ) -> tuple[int, int, int, int]:
     if not 0.85 <= crop_scale <= 1.25:
         raise ServiceException(ErrorCode.PARAM_ERROR, "裁切范围必须在 0.85～1.25 之间")
     if not -0.15 <= offset_x <= 0.15 or not -0.15 <= offset_y <= 0.15:
         raise ServiceException(ErrorCode.PARAM_ERROR, "裁切偏移必须在 -0.15～0.15 之间")
 
-    x, y, face_width, face_height = face
-    face_area = max(1, face_width * face_height)
-    # 人脸约占最终裁切区域面积的 20%，与 Hivision 的默认参数保持一致。
-    crop_area = face_area / 0.20 * (crop_scale**2)
+    face_area = max(1, face.width * face.height)
+    crop_area = face_area / template.face_area_ratio * (crop_scale**2)
     crop_height = max(
         1,
         round(math.sqrt(crop_area * template.height / template.width)),
     )
     crop_width = max(1, round(crop_height * template.width / template.height))
 
-    face_center_x = x + face_width / 2
-    face_center_y = y + face_height / 2
-    crop_left = round(face_center_x - crop_width / 2 + offset_x * crop_width)
-    crop_top = round(
-        face_center_y - crop_height * 0.45 + offset_y * crop_height
-    )
+    if len(face.landmarks) >= 2:
+        left_eye, right_eye = face.landmarks[:2]
+        anchor_x = (left_eye[0] + right_eye[0]) / 2
+        eye_y = (left_eye[1] + right_eye[1]) / 2
+    else:
+        anchor_x = face.x + face.width / 2
+        eye_y = face.y + face.height * 0.35
+
+    crop_left = round(anchor_x - crop_width / 2 + offset_x * crop_width)
+    base_top = eye_y - crop_height * template.eye_line_ratio
+    if head_top is not None:
+        head_margin = max(2, round(crop_height * 0.035))
+        base_top = min(base_top, head_top - head_margin)
+    crop_top = round(base_top + offset_y * crop_height)
     return crop_left, crop_top, crop_left + crop_width, crop_top + crop_height
 
 
@@ -436,19 +591,37 @@ def _crop_with_padding(image: np.ndarray, rect: tuple[int, int, int, int]) -> np
     return result
 
 
-def _compose_background(
+def _resize_rgba_on_background(
     image: np.ndarray,
+    size: tuple[int, int],
     background: tuple[int, int, int],
 ) -> np.ndarray:
+    """使用预乘 Alpha 缩放并换底，避免透明像素颜色污染发丝边缘。"""
     if image.ndim != 3 or image.shape[2] != 4:
         raise ServiceException(ErrorCode.CONVERSION_FAILED, "人像中间结果格式异常")
 
+    target_width, target_height = size
+    source_height, source_width = image.shape[:2]
+    interpolation = (
+        cv2.INTER_AREA
+        if target_width <= source_width and target_height <= source_height
+        else cv2.INTER_CUBIC
+    )
     alpha = image[:, :, 3].astype(np.float32) / 255.0
-    background_image = np.empty(image.shape[:2] + (3,), dtype=np.uint8)
-    background_image[:, :] = background
-    foreground = image[:, :, :3].astype(np.float32)
-    background_float = background_image.astype(np.float32)
-    result = foreground * alpha[:, :, None] + background_float * (1.0 - alpha[:, :, None])
+    premultiplied = image[:, :, :3].astype(np.float32) * alpha[:, :, None]
+    resized_alpha = cv2.resize(
+        alpha,
+        (target_width, target_height),
+        interpolation=interpolation,
+    )
+    resized_foreground = cv2.resize(
+        premultiplied,
+        (target_width, target_height),
+        interpolation=interpolation,
+    )
+    resized_alpha = np.clip(resized_alpha, 0.0, 1.0)
+    background_color = np.asarray(background, dtype=np.float32)
+    result = resized_foreground + background_color * (1.0 - resized_alpha[:, :, None])
     return np.clip(np.rint(result), 0, 255).astype(np.uint8)
 
 
@@ -562,6 +735,26 @@ def _read_metadata(task_dir: str) -> dict:
     return metadata
 
 
+def _face_from_metadata(metadata: dict) -> FaceDetection:
+    try:
+        face_data = metadata["face"]
+        landmarks = tuple(
+            (int(point["x"]), int(point["y"]))
+            for point in face_data["landmarks"]
+        )
+        if len(landmarks) != 5:
+            raise ValueError("invalid landmarks")
+        return FaceDetection(
+            x=int(face_data["x"]),
+            y=int(face_data["y"]),
+            width=int(face_data["width"]),
+            height=int(face_data["height"]),
+            landmarks=landmarks,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "任务人脸数据不存在或已损坏") from exc
+
+
 def _write_json(path: str, data: dict) -> None:
     temp_path = f"{path}.tmp"
     with open(temp_path, "w", encoding="utf-8") as file:
@@ -571,6 +764,7 @@ def _write_json(path: str, data: dict) -> None:
 
 def _render_task(
     task_id: str,
+    template: TemplateConfig,
     background_color: str,
     crop_scale: float,
     offset_x: float,
@@ -585,19 +779,7 @@ def _render_task(
     metadata = _read_metadata(task_dir)
 
     try:
-        template = TemplateConfig(
-            str(metadata["template_id"]),
-            str(metadata["template_name"]),
-            int(metadata["width"]),
-            int(metadata["height"]),
-        )
-        face_data = metadata["face"]
-        face = (
-            int(face_data["x"]),
-            int(face_data["y"]),
-            int(face_data["width"]),
-            int(face_data["height"]),
-        )
+        face = _face_from_metadata(metadata)
         model_name = str(metadata["model"])
         original_stem = safe_filename(str(metadata.get("original_stem", "photo")), "photo")
     except (KeyError, TypeError, ValueError) as exc:
@@ -609,24 +791,36 @@ def _render_task(
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "人像中间结果不存在或已损坏")
 
     background, background_key = _resolve_background(background_color)
-    crop_rect = _calculate_crop(face, template, crop_scale, offset_x, offset_y)
+    crop_rect = _calculate_crop(
+        face,
+        template,
+        crop_scale,
+        offset_x,
+        offset_y,
+        head_top=_find_head_top(matting, face),
+    )
     cropped = _crop_with_padding(matting, crop_rect)
-    standard_rgba = cv2.resize(
+    standard = _resize_rgba_on_background(
         cropped,
         (template.width, template.height),
-        interpolation=cv2.INTER_AREA,
+        background,
     )
-    standard = _compose_background(standard_rgba, background)
 
     hd_scale = max(1.0, 600 / min(template.width, template.height))
     hd_size = (
         max(template.width, round(template.width * hd_scale)),
         max(template.height, round(template.height * hd_scale)),
     )
-    hd = cv2.resize(standard, hd_size, interpolation=cv2.INTER_CUBIC)
+    # 高清照片直接从带 Alpha 的高分辨率裁切结果渲染，避免放大标准成片。
+    hd = _resize_rgba_on_background(cropped, hd_size, background)
     layout = _generate_layout(standard) if include_layout else None
 
-    base_name = f"{original_stem}_{template.template_id}_{background_key}"
+    template_key = (
+        template.template_id
+        if template.template_id != "custom"
+        else f"custom-{template.width}x{template.height}"
+    )
+    base_name = f"{original_stem}_{template_key}_{background_key}"
     output_specs: list[tuple[int, str, str, np.ndarray]] = [
         (0, "standard", f"{base_name}.jpg", standard),
         (1, "hd", f"{base_name}_hd.jpg", hd),
@@ -637,11 +831,13 @@ def _render_task(
     result_files: list[IdPhotoFileItem] = []
     with _RENDER_LOCK:
         prepared_files: list[tuple[int, str, str, str, str]] = []
+        temp_paths: list[str] = []
         try:
             for index, kind, display_name, image in output_specs:
                 internal_name = f"{index}_{display_name}"
                 output_path = os.path.join(task_dir, internal_name)
                 temp_path = f"{output_path}.tmp"
+                temp_paths.append(temp_path)
                 _save_jpeg(
                     image,
                     temp_path,
@@ -662,14 +858,14 @@ def _render_task(
                     )
                 )
         except ServiceException:
-            for _, _, _, temp_path, _ in prepared_files:
+            for temp_path in temp_paths:
                 try:
                     os.remove(temp_path)
                 except OSError:
                     pass
             raise
         except Exception as exc:
-            for _, _, _, temp_path, _ in prepared_files:
+            for temp_path in temp_paths:
                 try:
                     os.remove(temp_path)
                 except OSError:
@@ -758,15 +954,15 @@ def process_id_photo(
             os.path.join(task_dir, "metadata.json"),
             {
                 "task_id": task_id,
-                "template_id": template.template_id,
-                "template_name": template.name,
-                "width": template.width,
-                "height": template.height,
                 "face": {
-                    "x": face[0],
-                    "y": face[1],
-                    "width": face[2],
-                    "height": face[3],
+                    "x": face.x,
+                    "y": face.y,
+                    "width": face.width,
+                    "height": face.height,
+                    "landmarks": [
+                        {"x": point_x, "y": point_y}
+                        for point_x, point_y in face.landmarks
+                    ],
                 },
                 "source_width": int(image.shape[1]),
                 "source_height": int(image.shape[0]),
@@ -777,6 +973,7 @@ def process_id_photo(
 
         result = _render_task(
             task_id,
+            template,
             background_color,
             crop_scale=1.0,
             offset_x=0.0,
@@ -806,6 +1003,9 @@ def process_id_photo(
 
 def render_id_photo(
     task_id: str,
+    template_id: str,
+    width: int | None,
+    height: int | None,
     background_color: str,
     crop_scale: float,
     offset_x: float,
@@ -815,9 +1015,11 @@ def render_id_photo(
     dpi: int = 300,
     max_file_size_kb: int | None = None,
 ) -> IdPhotoResponse:
-    """使用任务中的抠图中间结果重新渲染证件照。"""
+    """使用任务中的抠图中间结果按指定规格重新渲染证件照。"""
+    template = _resolve_template(template_id, width, height)
     return _render_task(
         task_id,
+        template,
         background_color,
         crop_scale,
         offset_x,
