@@ -12,11 +12,13 @@ from app.api.v1.tools import image_converter as router_image_converter
 from app.api.v1.tools import epub_to_markdown as router_epub_to_markdown
 from app.api.v1.tools import pdf_to_word as router_pdf_to_word
 from app.api.v1.tools import qr_code as router_qr_code
+from app.api.v1.tools import id_photo as router_id_photo
 from app.schemas.response import ErrorCode
 from app.utils.logger_config import setup_logger
 from app.utils.exception import ServiceException
 from app.utils.temp_cleanup import cleanup_expired_temp
-from app.services.tools.list import set_libreoffice_available
+from app.services.tools.list import set_id_photo_available, set_libreoffice_available
+from app.services.tools.id_photo import get_model_status
 from app.core.config import settings
 
 logger = setup_logger(__name__)
@@ -52,6 +54,14 @@ async def lifespan(app: FastAPI):
     logger.info("检测 LibreOffice...")
     libreoffice_ok = check_libreoffice()
     set_libreoffice_available(libreoffice_ok)
+
+    logger.info("检测证件照模型和运行依赖...")
+    id_photo_ok, id_photo_reason = get_model_status()
+    set_id_photo_available(id_photo_ok, id_photo_reason)
+    if id_photo_ok:
+        logger.info("证件照模型检测成功")
+    else:
+        logger.warning(f"证件照工具不可用: {id_photo_reason}")
     yield
 
 
@@ -73,6 +83,7 @@ app.include_router(router_image_converter.router)
 app.include_router(router_epub_to_markdown.router)
 app.include_router(router_pdf_to_word.router)
 app.include_router(router_qr_code.router)
+app.include_router(router_id_photo.router)
 
 
 @app.exception_handler(ServiceException)

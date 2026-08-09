@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 4740
     MINERU_MODEL_PATH: str = ""
+    ID_PHOTO_MODEL_PATH: str = ""
     LIBREOFFICE_PATH: str = ""
 
     ROOT_PATH: str = os.path.dirname(
@@ -19,6 +20,13 @@ class Settings(BaseSettings):
         if self.MINERU_MODEL_PATH:
             return os.path.join(self.ROOT_PATH, self.MINERU_MODEL_PATH)
         return os.path.join(self.ROOT_PATH, "resources", "mineru")
+
+    @property
+    def id_photo_model_path(self) -> str:
+        """获取证件照本地模型目录。"""
+        if self.ID_PHOTO_MODEL_PATH:
+            return os.path.join(self.ROOT_PATH, self.ID_PHOTO_MODEL_PATH)
+        return os.path.join(self.ROOT_PATH, "resources", "id_photo")
 
     @property
     def libreoffice_path(self) -> str:

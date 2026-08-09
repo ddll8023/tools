@@ -31,6 +31,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'qrcode'],
     component: () => import('@/views/tools/QrCode.vue'),
   },
+  'id-photo': {
+    icon: ['fas', 'id-card'],
+    component: () => import('@/views/tools/IdPhoto.vue'),
+  },
 }
 
 /** 从后端获取工具列表并与本地注册表合并 */
@@ -50,6 +54,7 @@ export async function initToolConfigs(): Promise<ToolConfig[]> {
         component: local?.component ?? (() => Promise.reject(new Error(`未知工具: ${remote.id}`))),
         sidebarDefaultCollapsed: false,
         available: remote.available,
+        unavailableReason: remote.unavailable_reason ?? undefined,
       }
     })
 

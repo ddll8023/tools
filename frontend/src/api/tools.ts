@@ -64,6 +64,7 @@ export interface ToolItem {
   description: string
   icon: string
   available: boolean
+  unavailable_reason?: string | null
 }
 
 /**
@@ -465,5 +466,148 @@ export async function downloadAllConverted(taskId: string): Promise<void> {
   a.download = filename
   a.click()
 
+  URL.revokeObjectURL(url)
+}
+
+/* ════════════════════════════════════════
+   证件照 API
+   ════════════════════════════════════════ */
+
+export interface IdPhotoFileItem {
+  kind: 'standard' | 'hd' | 'layout'
+  filename: string
+  file_size: number
+  index: number
+}
+
+export interface IdPhotoResponse {
+  task_id: string
+  template_id: string
+  template_name: string
+  width: number
+  height: number
+  background_color: string
+  model: string
+  quality: number
+  dpi: number
+  max_file_size_kb: number | null
+  files: IdPhotoFileItem[]
+}
+
+export interface IdPhotoRenderParams {
+  task_id: string
+  background_color: string
+  crop_scale: number
+  offset_x: number
+  offset_y: number
+  include_layout: boolean
+  quality: number
+  dpi: number
+  max_file_size_kb: number | null
+}
+
+export async function processIdPhoto(
+  file: File,
+  templateId: string,
+  width?: number,
+  height?: number,
+  backgroundColor = 'white',
+  includeLayout = true,
+  quality = 95,
+  dpi = 300,
+  maxFileSizeKb?: number,
+): Promise<IdPhotoResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('template_id', templateId)
+  if (width !== undefined) formData.append('width', String(width))
+  if (height !== undefined) formData.append('height', String(height))
+  formData.append('background_color', backgroundColor)
+  formData.append('include_layout', String(includeLayout))
+  formData.append('quality', String(quality))
+  formData.append('dpi', String(dpi))
+  if (maxFileSizeKb !== undefined) {
+    formData.append('max_file_size_kb', String(maxFileSizeKb))
+  }
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/process`, {
+    method: 'POST',
+    body: formData,
+  })
+  const json: ApiResponse<IdPhotoResponse> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '证件照处理失败')
+  }
+  return json.data as IdPhotoResponse
+}
+
+export async function renderIdPhoto(
+  params: IdPhotoRenderParams,
+): Promise<IdPhotoResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  const json: ApiResponse<IdPhotoResponse> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '证件照重新渲染失败')
+  }
+  return json.data as IdPhotoResponse
+}
+
+export async function fetchIdPhotoFile(
+  taskId: string,
+  fileIndex: number,
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
+  })
+
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '文件读取失败')
+    }
+    throw new Error(`文件读取失败（HTTP ${res.status}）`)
+  }
+  return res.blob()
+}
+
+export async function downloadIdPhotoFile(
+  taskId: string,
+  fileIndex: number,
+  fallbackFilename = `${taskId}_${fileIndex}.jpg`,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
+  })
+
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '下载失败')
+    }
+    throw new Error(`下载失败（HTTP ${res.status}）`)
+  }
+
+  const filename = parseContentDispositionFilename(
+    res.headers.get('content-disposition'),
+    fallbackFilename,
+  )
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }

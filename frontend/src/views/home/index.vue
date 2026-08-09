@@ -67,7 +67,7 @@ function navigateTo(tool: { path: string; available?: boolean }) {
               v-else
               class="rounded-full bg-[#FFF0E0] px-2.5 py-0.5 text-[11px] font-medium text-[#B8860B]"
             >
-              需安装 LibreOffice
+              {{ tool.unavailableReason || '暂不可用' }}
             </span>
             <span
               class="text-sm text-text-tertiary transition-all duration-200"

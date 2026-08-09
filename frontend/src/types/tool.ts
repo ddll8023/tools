@@ -8,6 +8,7 @@ export interface ToolConfig {
   component: () => Promise<{ default: any }>
   sidebarDefaultCollapsed?: boolean
   available?: boolean
+  unavailableReason?: string
 }
 
 export interface ApiResponse<T> {
