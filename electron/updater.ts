@@ -1,20 +1,14 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater'
+import * as macUpdater from './mac-updater'
+import { broadcast, getCurrentStatus } from './update-state'
 import type { UpdateCommandResult, UpdateStatus } from './update-types'
 
-let initialized = false
-let currentStatus: UpdateStatus = { state: 'idle' }
-let checkPromise: Promise<UpdateCommandResult> | null = null
+const isMacCustom = process.platform === 'darwin'
 
-function broadcast(status: UpdateStatus) {
-  currentStatus = status
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-      window.webContents.send('updater:status', status)
-    }
-  }
-}
+let initialized = false
+let checkPromise: Promise<UpdateCommandResult> | null = null
 
 function versionOf(info: UpdateInfo | UpdateDownloadedEvent): string {
   return info.version || '新版本'
@@ -35,6 +29,9 @@ function handleUpdaterError(error: Error) {
 export function registerUpdaterIpc() {
   ipcMain.handle('updater:check', () => checkForUpdates())
   ipcMain.handle('updater:quit-and-install', () => {
+    if (isMacCustom) {
+      return macUpdater.quitAndInstall()
+    }
     if (!app.isPackaged || !autoUpdater.isUpdaterActive()) {
       return { ok: false, error: '当前没有可安装的更新' } satisfies UpdateCommandResult
     }
@@ -46,13 +43,22 @@ export function registerUpdaterIpc() {
 
 export function notifyUpdaterWindowReady(window: BrowserWindow) {
   if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-    window.webContents.send('updater:status', currentStatus)
+    window.webContents.send('updater:status', getCurrentStatus())
   }
 }
 
 export function initializeUpdater() {
   if (!app.isPackaged || initialized) return
   initialized = true
+
+  // macOS：免签名自定义更新器（未签名产物无法通过 Squirrel.Mac 的代码签名校验）
+  if (isMacCustom) {
+    macUpdater.initializeMacUpdater()
+    app.on('before-quit', () => {
+      macUpdater.maybeInstallOnQuit()
+    })
+    return
+  }
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
@@ -69,8 +75,9 @@ export function initializeUpdater() {
   })
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent)))
-    const currentVersion = currentStatus.state === 'available' || currentStatus.state === 'downloading'
-      ? currentStatus.version
+    const status = getCurrentStatus()
+    const currentVersion = status.state === 'available' || status.state === 'downloading'
+      ? status.version
       : '新版本'
     broadcast({
       state: 'downloading',
@@ -97,6 +104,9 @@ export function checkForUpdates(): Promise<UpdateCommandResult> {
   if (!app.isPackaged) {
     return Promise.resolve({ ok: false, error: '开发模式不检查更新' })
   }
+  if (isMacCustom) {
+    return macUpdater.checkForUpdates()
+  }
   if (checkPromise) return checkPromise
 
   broadcast({ state: 'checking' })
@@ -104,7 +114,7 @@ export function checkForUpdates(): Promise<UpdateCommandResult> {
     .then(() => ({ ok: true } satisfies UpdateCommandResult))
     .catch((error: unknown) => {
       // electron-updater 通常会先触发 error 事件；仅在没有事件状态时兜底处理。
-      if (currentStatus.state === 'checking') {
+      if (getCurrentStatus().state === 'checking') {
         handleUpdaterError(error instanceof Error ? error : new Error(String(error)))
       }
       return { ok: false, error: '更新检查失败' } satisfies UpdateCommandResult

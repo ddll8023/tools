@@ -16,3 +16,6 @@ temp/
 数据
 resources
 .env
+
+.dsh/
+.DS_Store

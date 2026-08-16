@@ -1,7 +1,7 @@
 {
   "name": "toolbox-desktop",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.0",
   "main": "electron/main.js",
   "scripts": {
     "dev": "node electron/dev-runner.js",
@@ -43,6 +43,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "electron/update-helper.js",
+        "to": "update-helper.js"
       }
     ],
     "mac": {
