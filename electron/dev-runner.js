@@ -1,12 +1,29 @@
 const { spawn, execSync } = require('child_process')
+const os = require('os')
 const path = require('path')
 const http = require('http')
+
+const APP_DATA_DIR_NAME = '工具盒子'
+
+function getUnifiedDataDir() {
+  const home = os.homedir()
+  let base
+  if (process.platform === 'win32') {
+    base = process.env.APPDATA || path.join(home, 'AppData', 'Roaming')
+  } else if (process.platform === 'darwin') {
+    base = path.join(home, 'Library', 'Application Support')
+  } else {
+    base = process.env.XDG_CONFIG_HOME || path.join(home, '.config')
+  }
+  return path.resolve(path.join(base, APP_DATA_DIR_NAME))
+}
 
 const ROOT_DIR = path.resolve(__dirname, '..')
 const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
 const BACKEND_DIR = path.join(ROOT_DIR, 'backend')
 const VITE_PORT = 5173
 const BACKEND_PORT = 4740
+const TOOLBOX_DATA_DIR = process.env.TOOLBOX_DATA_DIR || getUnifiedDataDir()
 
 function waitForBackendReady(maxWait = 60000) {
   return new Promise((resolve, reject) => {
@@ -142,7 +159,11 @@ async function main() {
   ], {
     cwd: BACKEND_DIR,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, PYTHONUNBUFFERED: '1' }
+    env: {
+      ...process.env,
+      PYTHONUNBUFFERED: '1',
+      TOOLBOX_DATA_DIR,
+    }
   })
   backendProc.stdout.on('data', (d) => process.stdout.write(`[backend] ${d}`))
   backendProc.stderr.on('data', (d) => process.stderr.write(`[backend] ${d}`))

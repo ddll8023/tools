@@ -89,7 +89,7 @@ function navigateTo(tool: { path: string; available?: boolean }) {
       </span>
       <span class="mx-3 inline-block">
         <font-awesome-icon :icon="['far', 'file-lines']" class="mr-1" />
-        v0.1.0
+        v0.1.1
       </span>
     </footer>
   </div>

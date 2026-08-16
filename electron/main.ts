@@ -9,6 +9,12 @@ import {
   registerUpdaterIpc,
 } from './updater'
 
+const APP_DATA_DIR_NAME = '工具盒子'
+const UNIFIED_USER_DATA_DIR = path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
+
+app.setName(APP_DATA_DIR_NAME)
+app.setPath('userData', UNIFIED_USER_DATA_DIR)
+
 const isDev = !app.isPackaged
 const VITE_PORT = 5173
 const VITE_URL = `http://127.0.0.1:${VITE_PORT}`
@@ -174,7 +180,7 @@ function startBackend(): Promise<void> {
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
-        ...(isDev ? {} : { TOOLBOX_DATA_DIR: app.getPath('userData') }),
+        TOOLBOX_DATA_DIR: app.getPath('userData'),
       },
     })
 

@@ -12,6 +12,21 @@ def _runtime_root() -> str:
     )
 
 
+def _default_data_root() -> str:
+    """返回开发和打包都使用的统一用户数据目录。"""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    return os.path.abspath(os.path.join(base, "工具盒子"))
+
+
+DEFAULT_DATA_ROOT = _default_data_root()
+
+
 class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/toolbox.db"
     API_HOST: str = "127.0.0.1"
@@ -25,10 +40,23 @@ class Settings(BaseSettings):
 
     @property
     def data_root(self) -> str:
-        """返回可写数据目录；打包运行时由 Electron 注入用户数据目录。"""
+        """返回开发和打包一致的可写用户数据目录。"""
         if self.TOOLBOX_DATA_DIR:
             return os.path.abspath(self.TOOLBOX_DATA_DIR)
-        return self.ROOT_PATH
+        return DEFAULT_DATA_ROOT
+
+    @property
+    def database_url(self) -> str:
+        """将相对 SQLite 路径解析到统一用户数据目录。"""
+        if not self.DATABASE_URL.startswith("sqlite:///"):
+            return self.DATABASE_URL
+
+        database_path = self.DATABASE_URL[len("sqlite:///"):]
+        if database_path == ":memory:":
+            return self.DATABASE_URL
+        if not os.path.isabs(database_path):
+            database_path = os.path.join(self.data_root, database_path)
+        return f"sqlite:///{os.path.normpath(database_path)}"
 
     @staticmethod
     def _resolve_path(value: str, base: str) -> str:

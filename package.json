@@ -1,7 +1,7 @@
 {
   "name": "toolbox-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "electron/main.js",
   "scripts": {
     "dev": "node electron/dev-runner.js",

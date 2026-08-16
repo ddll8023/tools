@@ -48,6 +48,8 @@ def check_libreoffice():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    os.makedirs(settings.data_root, exist_ok=True)
+
     logger.info("启动清理过期临时文件...")
     cleanup_expired_temp()
 
@@ -65,7 +67,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="工具盒子", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="工具盒子", version="0.1.1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
