@@ -16,6 +16,11 @@ const currentState = ref<PageState>('upload')
 const errorMessage = ref('')
 const selectedFile = ref<File | null>(null)
 const currentTaskId = ref('')
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function openFilePicker() {
+  fileInput.value?.click()
+}
 
 /* ── 文件校验 ── */
 function validateFile(file: File): string | null {
@@ -113,7 +118,7 @@ function resetUpload() {
           </p>
           <button
             class="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white transition-all duration-200 hover:bg-primary-dark"
-            @click="$refs.fileInput.click()"
+            @click="openFilePicker"
           >
             <font-awesome-icon :icon="['fas', 'upload']" />
             选择 Word 文件

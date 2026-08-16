@@ -14,7 +14,8 @@ from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-TEMP_DIR = os.path.join(settings.ROOT_PATH, "temp")
+# 临时任务必须写入用户数据目录，不能写入打包后的只读应用资源目录。
+TEMP_DIR = os.path.join(settings.data_root, "temp")
 UPLOADS_DIR = os.path.join(TEMP_DIR, "uploads")
 
 

@@ -4,7 +4,7 @@
  * 依赖组件：AppSidebar
  */
 <script setup lang="ts">
-import { watch, ref, computed, onMounted } from 'vue'
+import { watch, ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useLayoutStore } from '@/stores/layout'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
@@ -22,7 +22,9 @@ watch(
 
 /** Electron 窗口控制 */
 const isMaximized = ref(false)
-const isElectron = computed(() => !!(window as any).desktopApi?.windowControls)
+const isElectron = computed(() => !!window.desktopApi?.windowControls)
+const updateStatus = ref<UpdateStatus>({ state: 'idle' })
+let removeUpdaterListener: (() => void) | null = null
 
 function minimizeWindow() {
   window.desktopApi?.windowControls.minimize()
@@ -36,12 +38,29 @@ function closeWindow() {
   window.desktopApi?.windowControls.close()
 }
 
+function installUpdate() {
+  void window.desktopApi?.updater.quitAndInstall()
+}
+
+function dismissUpdateNotice() {
+  updateStatus.value = { state: 'idle' }
+}
+
 onMounted(async () => {
   if (!isElectron.value) return
   isMaximized.value = await window.desktopApi!.windowControls.isMaximized()
   window.desktopApi!.windowControls.onMaximizeChange((maximized) => {
     isMaximized.value = maximized
   })
+  if (window.desktopApi?.updater) {
+    removeUpdaterListener = window.desktopApi.updater.onStatus((status) => {
+      updateStatus.value = status
+    })
+  }
+})
+
+onBeforeUnmount(() => {
+  removeUpdaterListener?.()
 })
 </script>
 
@@ -117,6 +136,73 @@ onMounted(async () => {
         </button>
       </div>
     </header>
+
+    <div
+      v-if="updateStatus.state === 'available' || updateStatus.state === 'downloading' || updateStatus.state === 'downloaded' || updateStatus.state === 'error'"
+      class="fixed right-4 top-16 z-50 w-[320px] rounded-xl border border-border bg-surface p-4 shadow-lg"
+      aria-live="polite"
+    >
+      <template v-if="updateStatus.state === 'available'">
+        <div class="flex items-start gap-3">
+          <font-awesome-icon :icon="['fas', 'rotate']" class="mt-0.5 text-primary" />
+          <div>
+            <p class="text-sm font-semibold">发现新版本 {{ updateStatus.version }}</p>
+            <p class="mt-1 text-xs text-text-secondary">正在后台下载更新，期间可以继续使用。</p>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="updateStatus.state === 'downloading'">
+        <div class="flex items-start gap-3">
+          <font-awesome-icon :icon="['fas', 'download']" class="mt-0.5 text-primary" />
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-sm font-semibold">正在下载 {{ updateStatus.version }}</p>
+              <span class="text-xs text-text-secondary">{{ updateStatus.percent }}%</span>
+            </div>
+            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-hover">
+              <div
+                class="h-full rounded-full bg-primary transition-all duration-300"
+                :style="{ width: `${updateStatus.percent}%` }"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="updateStatus.state === 'downloaded'">
+        <div class="flex items-start gap-3">
+          <font-awesome-icon :icon="['fas', 'circle-check']" class="mt-0.5 text-success" />
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold">更新已下载</p>
+            <p class="mt-1 text-xs text-text-secondary">重启软件后将安装 {{ updateStatus.version }}。</p>
+            <button
+              class="mt-3 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-dark"
+              @click="installUpdate"
+            >
+              立即重启更新
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="updateStatus.state === 'error'">
+        <div class="flex items-start gap-3">
+          <font-awesome-icon :icon="['fas', 'triangle-exclamation']" class="mt-0.5 text-error" />
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold">更新检查失败</p>
+            <p class="mt-1 text-xs text-text-secondary">{{ updateStatus.message }}</p>
+          </div>
+          <button
+            class="text-text-tertiary transition-colors hover:text-text"
+            aria-label="关闭更新提示"
+            @click="dismissUpdateNotice"
+          >
+            <font-awesome-icon :icon="['fas', 'xmark']" />
+          </button>
+        </div>
+      </template>
+    </div>
 
     <div class="flex flex-1 overflow-hidden">
       <AppSidebar />

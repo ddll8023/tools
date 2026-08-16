@@ -1,5 +1,7 @@
 node_modules/
 dist/
+build/
+release/
 electron/*.js
 electron/*.js.map
 !electron/dev-runner.js
@@ -7,6 +9,7 @@ playwright-report/
 test-results/
 __pycache__/
 *.pyc
+*.tsbuildinfo
 .venv/
 *.egg-info/
 temp/

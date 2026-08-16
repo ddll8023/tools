@@ -1,7 +1,13 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
+import { existsSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
+import {
+  initializeUpdater,
+  notifyUpdaterWindowReady,
+  registerUpdaterIpc,
+} from './updater'
 
 const isDev = !app.isPackaged
 const VITE_PORT = 5173
@@ -10,7 +16,12 @@ const BACKEND_PORT = 4740
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`
 const ROOT_DIR = path.resolve(__dirname, '..')
 const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
-const BACKEND_DIR = path.join(ROOT_DIR, 'backend')
+const DEV_BACKEND_DIR = path.join(ROOT_DIR, 'backend')
+const PACKAGED_BACKEND_DIR = path.join(process.resourcesPath, 'backend')
+const PACKAGED_BACKEND_EXECUTABLE = path.join(
+  PACKAGED_BACKEND_DIR,
+  process.platform === 'win32' ? 'toolbox-backend.exe' : 'toolbox-backend',
+)
 
 let viteProcess: ChildProcess | null = null
 let backendProcess: ChildProcess | null = null
@@ -47,6 +58,12 @@ function createWindow() {
     mainWindow.loadFile(path.join(ROOT_DIR, 'frontend', 'dist', 'index.html'))
   }
 
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      notifyUpdaterWindowReady(mainWindow)
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -54,6 +71,7 @@ function createWindow() {
 
 /** 窗口控制 IPC：只注册一次，避免窗口重建时重复注册抛错 */
 function registerWindowIpc() {
+  ipcMain.handle('get-app-data-path', () => app.getPath('userData'))
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize()
   })
@@ -133,16 +151,31 @@ function waitForBackendReady(): Promise<void> {
 
 function startBackend(): Promise<void> {
   return new Promise((resolve, reject) => {
-    backendProcess = spawn('uv', [
-      'run', 'uvicorn', 'app.main:app',
-      '--host', '127.0.0.1', '--port', String(BACKEND_PORT)
-    ], {
-      cwd: BACKEND_DIR,
-      shell: true,
+    if (!isDev && !existsSync(PACKAGED_BACKEND_EXECUTABLE)) {
+      reject(new Error(`未找到后端运行时: ${PACKAGED_BACKEND_EXECUTABLE}`))
+      return
+    }
+
+    const command = isDev ? 'uv' : PACKAGED_BACKEND_EXECUTABLE
+    const args = isDev
+      ? [
+          'run', 'uvicorn', 'app.main:app',
+          '--host', '127.0.0.1', '--port', String(BACKEND_PORT),
+        ]
+      : []
+    const cwd = isDev ? DEV_BACKEND_DIR : app.getPath('userData')
+
+    backendProcess = spawn(command, args, {
+      cwd,
+      shell: isDev,
       // 创建独立进程组，退出时可按组终止 uv 与 uvicorn 子进程
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        ...(isDev ? {} : { TOOLBOX_DATA_DIR: app.getPath('userData') }),
+      },
     })
 
     backendProcess.stdout?.on('data', (data: Buffer) => {
@@ -152,9 +185,26 @@ function startBackend(): Promise<void> {
       process.stderr.write(`[backend] ${data}`)
     })
 
-    backendProcess.on('error', reject)
+    let settled = false
+    const succeed = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
 
-    waitForBackendReady().then(resolve).catch(reject)
+    backendProcess.on('error', fail)
+    backendProcess.on('exit', (code) => {
+      if (code !== null && code !== 0) {
+        fail(new Error(`后端进程退出，code=${code}`))
+      }
+    })
+
+    waitForBackendReady().then(succeed).catch(fail)
   })
 }
 
@@ -231,6 +281,7 @@ function stopVite() {
 
 app.whenReady().then(async () => {
   registerWindowIpc()
+  registerUpdaterIpc()
 
   if (isDev) {
     if (process.env.BACKEND_MANAGED) {
@@ -254,12 +305,28 @@ app.whenReady().then(async () => {
         return
       }
     }
+  } else {
+    console.log('[main] 生产模式，启动内置后端...')
+    try {
+      await startBackend()
+      console.log('[main] 内置后端已就绪')
+    } catch (err) {
+      console.error('[main] 内置后端启动失败:', err)
+    }
   }
 
   createWindow()
+  initializeUpdater()
 
-  app.on('activate', () => {
+  app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
+      if (!isDev && !backendProcess) {
+        try {
+          await startBackend()
+        } catch (err) {
+          console.error('[main] 重新启动内置后端失败:', err)
+        }
+      }
       createWindow()
     }
   })

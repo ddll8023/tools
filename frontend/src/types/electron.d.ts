@@ -10,6 +10,25 @@ interface WindowControls {
   onMaximizeChange: (callback: (maximized: boolean) => void) => void
 }
 
+type UpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'downloading'; version: string; percent: number; bytesPerSecond: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string }
+
+interface UpdateCommandResult {
+  ok: boolean
+  error?: string
+}
+
+interface UpdaterApi {
+  check: () => Promise<UpdateCommandResult>
+  quitAndInstall: () => Promise<UpdateCommandResult>
+  onStatus: (callback: (status: UpdateStatus) => void) => () => void
+}
+
 interface DesktopApi {
   platform: string
   versions: {
@@ -19,6 +38,7 @@ interface DesktopApi {
   }
   getAppDataPath: () => Promise<string>
   windowControls: WindowControls
+  updater: UpdaterApi
 }
 
 interface Window {

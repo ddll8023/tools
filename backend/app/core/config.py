@@ -3,6 +3,15 @@ import sys
 from pydantic_settings import BaseSettings
 
 
+def _runtime_root() -> str:
+    """返回内置资源根目录；兼容源码运行和 PyInstaller 运行。"""
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+    return os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+
+
 class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/toolbox.db"
     API_HOST: str = "127.0.0.1"
@@ -10,37 +19,52 @@ class Settings(BaseSettings):
     MINERU_MODEL_PATH: str = ""
     ID_PHOTO_MODEL_PATH: str = ""
     LIBREOFFICE_PATH: str = ""
+    TOOLBOX_DATA_DIR: str = ""
 
-    ROOT_PATH: str = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
+    ROOT_PATH: str = _runtime_root()
+
+    @property
+    def data_root(self) -> str:
+        """返回可写数据目录；打包运行时由 Electron 注入用户数据目录。"""
+        if self.TOOLBOX_DATA_DIR:
+            return os.path.abspath(self.TOOLBOX_DATA_DIR)
+        return self.ROOT_PATH
+
+    @staticmethod
+    def _resolve_path(value: str, base: str) -> str:
+        if os.path.isabs(value):
+            return value
+        return os.path.join(base, value)
 
     @property
     def mineru_model_path(self) -> str:
         if self.MINERU_MODEL_PATH:
-            return os.path.join(self.ROOT_PATH, self.MINERU_MODEL_PATH)
-        return os.path.join(self.ROOT_PATH, "resources", "mineru")
+            return self._resolve_path(self.MINERU_MODEL_PATH, self.data_root)
+        # MinerU 会在运行时下载模型，不能写入只读的应用包目录。
+        return os.path.join(self.data_root, "resources", "mineru")
 
     @property
     def id_photo_model_path(self) -> str:
-        """获取证件照本地模型目录。"""
+        """获取证件照本地模型目录，优先读取应用包内资源。"""
         if self.ID_PHOTO_MODEL_PATH:
-            return os.path.join(self.ROOT_PATH, self.ID_PHOTO_MODEL_PATH)
-        return os.path.join(self.ROOT_PATH, "resources", "id_photo")
+            return self._resolve_path(self.ID_PHOTO_MODEL_PATH, self.data_root)
+
+        bundled = os.path.join(self.ROOT_PATH, "resources", "id_photo")
+        if os.path.isdir(bundled):
+            return bundled
+        return os.path.join(self.data_root, "resources", "id_photo")
 
     @property
     def libreoffice_path(self) -> str:
         """获取 LibreOffice 可执行文件路径，按优先级：
         1. .env 中显式指定的 LIBREOFFICE_PATH
-        2. 项目内便携版（Windows）
-           - backend/resources/LibreOfficePortable/LibreOfficePortable.exe
+        2. 应用包内便携版（Windows）
         3. macOS 标准安装路径
         4. 系统 PATH 中的 soffice
         """
         if self.LIBREOFFICE_PATH:
-            return self.LIBREOFFICE_PATH
+            return self._resolve_path(self.LIBREOFFICE_PATH, self.data_root)
 
-        # Windows 便携版
         portable = os.path.join(
             self.ROOT_PATH,
             "resources",
@@ -50,7 +74,6 @@ class Settings(BaseSettings):
         if os.path.exists(portable):
             return portable
 
-        # macOS 标准安装路径
         mac_soffice = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
         if sys.platform == "darwin" and os.path.exists(mac_soffice):
             return mac_soffice

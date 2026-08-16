@@ -7,6 +7,10 @@
     "dev": "node electron/dev-runner.js",
     "compile:electron": "tsc -p electron/tsconfig.json",
     "build:frontend": "npm --prefix frontend run build",
+    "build:backend": "node scripts/build-backend-runtime.js",
+    "build:release": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --publish never",
+    "dist:mac": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --mac --arm64 --publish never",
+    "dist:win": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --win --x64 --publish never",
     "electron": "electron .",
     "dev:backend": "uv run --directory backend uvicorn app.main:app --host 127.0.0.1 --port 4740 --reload"
   },
@@ -21,23 +25,39 @@
     "directories": {
       "output": "release"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "ddll8023",
+      "repo": "tools",
+      "releaseType": "release"
+    },
     "files": [
       "package.json",
-      "electron/**/*.js"
+      "electron/**/*.js",
+      "frontend/dist/**/*"
     ],
     "extraResources": [
       {
-        "from": "frontend/dist",
-        "to": "frontend/dist",
+        "from": "build/backend-runtime",
+        "to": "backend",
         "filter": [
           "**/*"
         ]
       }
     ],
-    "win": {
+    "mac": {
+      "artifactName": "toolbox-${version}-${os}-${arch}.${ext}",
       "target": [
-        "dir",
-        "nsis"
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "artifactName": "toolbox-${version}-${os}-${arch}.${ext}",
+      "target": [
+        "nsis",
+        "zip"
       ]
     },
     "nsis": {
@@ -49,5 +69,8 @@
   },
   "allowScripts": {
     "electron@43.2.0": true
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
   }
 }

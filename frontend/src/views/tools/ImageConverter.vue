@@ -22,6 +22,11 @@ const previewUrl = ref<string | null>(null)
 
 const targetFormat = ref('png')
 const quality = ref(85)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function openFilePicker() {
+  fileInput.value?.click()
+}
 
 const formats = [
   { value: 'png', label: 'PNG' },
@@ -204,7 +209,7 @@ function formatSize(bytes: number): string {
           </p>
           <button
             class="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white transition-all duration-200 hover:bg-primary-dark"
-            @click="$refs.fileInput.click()"
+            @click="openFilePicker"
           >
             <font-awesome-icon :icon="['fas', 'upload']" />
             选择图片

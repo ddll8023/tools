@@ -145,13 +145,17 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
 
         write_status_atomic(task_dir, 15, "正在加载深度学习模型...")
 
-        # 使用 venv 中 mineru 的完整路径，避免子进程 PATH 找不到可执行文件
-        mineru_bin = os.path.dirname(sys.executable)
-        mineru_exe = os.path.join(mineru_bin, "mineru.exe" if os.name == "nt" else "mineru")
+        # 打包后由同一个 PyInstaller 后端进程提供 MinerU CLI，避免依赖外部 Python/venv。
+        if getattr(sys, "frozen", False):
+            mineru_command = [sys.executable, "--toolbox-mineru"]
+        else:
+            mineru_bin = os.path.dirname(sys.executable)
+            mineru_command = [
+                os.path.join(mineru_bin, "mineru.exe" if os.name == "nt" else "mineru")
+            ]
 
         proc = subprocess.Popen(
-            [
-                mineru_exe,
+            mineru_command + [
                 "-p", pdf_path,
                 "-o", mineru_out,
                 "-b", "pipeline",

@@ -81,6 +81,11 @@ const editingMarkdown = ref('')
 /* ── 元素引用 ── */
 const leftEditorRef = ref<HTMLTextAreaElement | null>(null)
 const rightPreviewRef = ref<HTMLElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function openFilePicker() {
+  fileInput.value?.click()
+}
 
 /* 双栏模式下容器宽度自适应：宽屏 1400px，单栏/其他保持 860px */
 const isWideMode = computed(() => currentState.value === 'result' && viewMode.value === 'split')
@@ -262,7 +267,7 @@ function resetUpload() {
           <p class="mb-[18px] text-[13px] text-text-secondary">或点击下方按钮选择文件</p>
           <button
             class="inline-flex items-center gap-2 rounded-lg bg-primary px-[22px] py-[9px] font-inherit text-[13px] font-medium text-white cursor-pointer transition-all duration-200 hover:bg-primary-dark"
-            @click="$refs.fileInput.click()"
+            @click="openFilePicker"
           >
             <font-awesome-icon :icon="['fas', 'upload']" />
             选择 PDF 文件
