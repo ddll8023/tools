@@ -22,6 +22,6 @@ test.describe('首页', () => {
 
   test('显示页脚信息', async ({ page }) => {
     await expect(page.getByText('本地处理，文件不会上传')).toBeVisible()
-    await expect(page.getByText('v0.1.1')).toBeVisible()
+    await expect(page.getByText('v0.1.0')).toBeVisible()
   })
 })

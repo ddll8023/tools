@@ -35,6 +35,7 @@ interface DesktopApi {
     node: string
     chrome: string
     electron: string
+    app: string
   }
   getAppDataPath: () => Promise<string>
   windowControls: WindowControls

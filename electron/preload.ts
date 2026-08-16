@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { app, contextBridge, ipcRenderer } from 'electron'
 import type { UpdateCommandResult, UpdateStatus } from './update-types'
 
 contextBridge.exposeInMainWorld('desktopApi', {
@@ -6,7 +6,8 @@ contextBridge.exposeInMainWorld('desktopApi', {
   versions: {
     node: process.versions.node,
     chrome: process.versions.chrome,
-    electron: process.versions.electron
+    electron: process.versions.electron,
+    app: app.getVersion()
   },
   getAppDataPath: () => ipcRenderer.invoke('get-app-data-path'),
 
