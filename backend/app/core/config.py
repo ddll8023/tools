@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 4740
     MINERU_MODEL_PATH: str = ""
+    # 深度解析：模型下载与转换分别计时，避免首次下载被短超时误杀
+    MINERU_MODEL_DOWNLOAD_TIMEOUT: int = 1800
+    MINERU_CONVERT_TIMEOUT: int = 600
     ID_PHOTO_MODEL_PATH: str = ""
     LIBREOFFICE_PATH: str = ""
     TOOLBOX_DATA_DIR: str = ""

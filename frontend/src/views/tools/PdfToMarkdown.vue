@@ -180,7 +180,9 @@ async function handleFile(file: File) {
 
     if (deepParse.value) {
       currentTaskId.value = result.task_id
-      await pollProgress(result.task_id)
+      const ok = await pollProgress(result.task_id)
+      // 轮询已失败时保留真实错误文案，不再调用 preview 覆盖为"转换结果不存在"
+      if (!ok) return
       const data = await getPreview(result.task_id)
       preview.value = data
       editingMarkdown.value = data.markdown_content
@@ -198,7 +200,8 @@ async function handleFile(file: File) {
   }
 }
 
-async function pollProgress(taskId: string) {
+/** 轮询深度解析进度；返回 false 表示解析失败，调用方应终止后续流程 */
+async function pollProgress(taskId: string): Promise<boolean> {
   while (true) {
     try {
       const p = await getProgress(taskId)
@@ -206,13 +209,15 @@ async function pollProgress(taskId: string) {
       progressStage.value = p.stage
 
       if (p.progress < 0) {
-        throw new Error(p.stage || '深度解析失败')
+        errorMessage.value = p.stage || '深度解析失败'
+        currentState.value = 'error'
+        return false
       }
-      if (p.progress >= 100) break
+      if (p.progress >= 100) return true
     } catch (e: any) {
       errorMessage.value = e.message || '深度解析失败'
       currentState.value = 'error'
-      return
+      return false
     }
     await new Promise(r => setTimeout(r, POLL_INTERVAL))
   }

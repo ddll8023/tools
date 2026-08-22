@@ -20,6 +20,29 @@ def _check_task_path(task_dir: str):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
 
+def read_deep_status(task_dir: str) -> dict | None:
+    """读取深度解析状态文件；不存在或损坏时返回 None。"""
+    status_path = os.path.join(task_dir, "deep_status.json")
+    if not os.path.exists(status_path):
+        return None
+    try:
+        with open(status_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _raise_deep_failure_or_not_found(task_dir: str, default_message: str):
+    """结果文件缺失时，优先透传深度解析的真实失败原因。"""
+    status = read_deep_status(task_dir)
+    if status and status.get("progress", 0) < 0:
+        raise ServiceException(
+            ErrorCode.CONVERSION_FAILED,
+            status.get("stage") or "深度解析失败，请稍后重试",
+        )
+    raise ServiceException(ErrorCode.DATA_NOT_FOUND, default_message)
+
+
 def get_preview_detail(task_id: str):
     """获取 Markdown 预览"""
     logger.info(f"获取预览: task_id={task_id}")
@@ -34,7 +57,7 @@ def get_preview_detail(task_id: str):
 
     md_path = os.path.join(task_dir, "output.md")
     if not os.path.exists(md_path):
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "转换结果不存在")
+        _raise_deep_failure_or_not_found(task_dir, "转换结果不存在")
 
     images_dir = os.path.join(task_dir, "images")
     image_count = len(os.listdir(images_dir)) if os.path.exists(images_dir) else 0
@@ -77,7 +100,7 @@ def download_md(task_id: str):
 
     md_path = os.path.join(task_dir, "output.md")
     if not os.path.exists(md_path):
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在")
+        _raise_deep_failure_or_not_found(task_dir, "文件不存在")
 
     logger.info(f"文件下载返回: task_id={task_id}")
     return md_path

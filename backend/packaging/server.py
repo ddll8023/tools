@@ -15,9 +15,21 @@ def _run_mineru() -> None:
     raise SystemExit(mineru_main())
 
 
+def _run_mineru_models() -> None:
+    """在打包后的同一运行时中执行 MinerU 模型下载入口。"""
+    sys.argv.remove("--toolbox-mineru-models")
+    from mineru.cli.models_download import download_models
+
+    raise SystemExit(download_models())
+
+
 def main() -> None:
     if "--toolbox-mineru" in sys.argv:
         _run_mineru()
+        return
+
+    if "--toolbox-mineru-models" in sys.argv:
+        _run_mineru_models()
         return
 
     # Windows 的 ProcessPoolExecutor 需要此调用才能在 frozen 进程中安全派生。

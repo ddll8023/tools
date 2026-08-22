@@ -7,7 +7,9 @@ import re
 import shutil
 import threading
 import subprocess
-import concurrent.futures
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 from fastapi import UploadFile
 
@@ -22,6 +24,7 @@ from app.services.tools.pdf_to_markdown_helpers import (
     UPLOADS_DIR,
     validate_task_id,
     write_status_atomic,
+    read_deep_status,
 )
 
 logger = setup_logger(__name__)
@@ -33,8 +36,6 @@ _STAGE_PATTERNS = [
     (r"表格|公式|图片", 75, "正在提取表格与图片..."),
     (r"生成|输出|Markdown", 90, "正在生成 Markdown 文档..."),
 ]
-
-CONVERT_TIMEOUT = 600  # 秒，与前端轮询容忍度匹配
 
 # ========== 公共入口函数 ==========
 
@@ -62,11 +63,41 @@ def convert_pdf_deep(file: UploadFile):
 
     write_status_atomic(task_dir, 0, "排队等待中...")
 
-    executor = concurrent.futures.ProcessPoolExecutor(max_workers=1)
-    executor.submit(_run_mineru_convert, task_id, pdf_path, task_dir)
-    executor.shutdown(wait=False)
+    _submit_mineru_task(task_id, pdf_path, task_dir)
 
     return ConvertResponse(task_id=task_id, filename=safe_name, page_count=0)
+
+
+# ========== 模块级单例执行器：深度解析串行排队，避免并发任务各加载一份大模型 ==========
+
+_executor: ProcessPoolExecutor | None = None
+_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_executor() -> ProcessPoolExecutor:
+    global _executor
+    with _EXECUTOR_LOCK:
+        if _executor is None:
+            _executor = ProcessPoolExecutor(max_workers=1)
+        return _executor
+
+
+def _reset_executor() -> None:
+    global _executor
+    with _EXECUTOR_LOCK:
+        if _executor is not None:
+            _executor.shutdown(wait=False)
+        _executor = ProcessPoolExecutor(max_workers=1)
+
+
+def _submit_mineru_task(task_id: str, pdf_path: str, task_dir: str) -> None:
+    """提交深度解析任务；工作进程此前崩溃时重建执行器并重试一次。"""
+    try:
+        _get_executor().submit(_run_mineru_convert, task_id, pdf_path, task_dir)
+    except BrokenProcessPool:
+        logger.warning("MinerU 工作进程已崩溃，重建执行器后重新提交")
+        _reset_executor()
+        _get_executor().submit(_run_mineru_convert, task_id, pdf_path, task_dir)
 
 
 def get_progress_detail(task_id: str):
@@ -79,13 +110,9 @@ def get_progress_detail(task_id: str):
     if os.path.commonpath([root, os.path.abspath(task_dir)]) != root:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
-    status_path = os.path.join(task_dir, "deep_status.json")
-    if not os.path.exists(status_path):
+    data = read_deep_status(task_dir)
+    if data is None or "progress" not in data or "stage" not in data:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "任务不存在或非深度模式")
-
-    import json
-    with open(status_path, encoding="utf-8") as f:
-        data = json.load(f)
 
     return GetProgressResponse(progress=data["progress"], stage=data["stage"])
 
@@ -130,32 +157,29 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
         cache_dir = settings.mineru_model_path
         os.makedirs(cache_dir, exist_ok=True)
         hf_cache = os.path.join(cache_dir, "huggingface")
-        os.makedirs(hf_cache, exist_ok=True)
-
-        write_status_atomic(task_dir, 10, "正在初始化 MinerU 引擎...")
-
-        env = dict(os.environ)
         modelscope_cache = os.path.join(cache_dir, "modelscope")
+        os.makedirs(hf_cache, exist_ok=True)
         os.makedirs(modelscope_cache, exist_ok=True)
 
+        env = dict(os.environ)
         env["HF_HOME"] = hf_cache
         env["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
         env["MINERU_MODEL_SOURCE"] = "modelscope"
         env["MODELSCOPE_CACHE"] = modelscope_cache
 
+        download_command, convert_command = _mineru_commands()
+
+        # 首次使用需在线下载模型：独立长超时计时，
+        # 避免下载被转换超时误杀后留下半成品缓存、重试永远失败。
+        if not _model_cache_ready(cache_dir):
+            write_status_atomic(task_dir, 8, "正在下载解析模型（仅首次使用）...")
+            if not _run_model_download(task_id, task_dir, download_command, env):
+                return
+
         write_status_atomic(task_dir, 15, "正在加载深度学习模型...")
 
-        # 打包后由同一个 PyInstaller 后端进程提供 MinerU CLI，避免依赖外部 Python/venv。
-        if getattr(sys, "frozen", False):
-            mineru_command = [sys.executable, "--toolbox-mineru"]
-        else:
-            mineru_bin = os.path.dirname(sys.executable)
-            mineru_command = [
-                os.path.join(mineru_bin, "mineru.exe" if os.name == "nt" else "mineru")
-            ]
-
         proc = subprocess.Popen(
-            mineru_command + [
+            convert_command + [
                 "-p", pdf_path,
                 "-o", mineru_out,
                 "-b", "pipeline",
@@ -183,14 +207,16 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
             reader.start()
 
         try:
-            returncode = proc.wait(timeout=CONVERT_TIMEOUT)
+            returncode = proc.wait(timeout=settings.MINERU_CONVERT_TIMEOUT)
         except subprocess.TimeoutExpired:
             _kill_process(proc)
+            _discard_partial_output(mineru_out)
             write_status_atomic(task_dir, -1, "深度解析超时，请重试")
             logger.error(f"MinerU 超时: task_id={task_id}")
             return
 
         if returncode != 0:
+            _discard_partial_output(mineru_out)
             write_status_atomic(task_dir, -1, "深度解析失败，请稍后重试")
             logger.error(f"MinerU 转换失败: task_id={task_id} rc={returncode}")
             return
@@ -204,8 +230,90 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
         logger.info(f"深度解析完成: task_id={task_id}")
 
     except Exception as e:
+        _discard_partial_output(os.path.join(task_dir, "mineru_output"))
         write_status_atomic(task_dir, -1, "深度解析失败，请稍后重试")
         logger.error(f"深度解析异常: task_id={task_id} error={e}", exc_info=True)
+
+
+def _mineru_commands() -> tuple[list[str], list[str]]:
+    """返回（模型下载命令，PDF 转换命令）。
+
+    打包后由同一个 PyInstaller 后端进程提供 MinerU CLI，避免依赖外部 Python/venv。
+    """
+    if getattr(sys, "frozen", False):
+        return (
+            [sys.executable, "--toolbox-mineru-models"],
+            [sys.executable, "--toolbox-mineru"],
+        )
+
+    bin_dir = os.path.dirname(sys.executable)
+    suffix = ".exe" if os.name == "nt" else ""
+    return (
+        [os.path.join(bin_dir, f"mineru-models-download{suffix}")],
+        [os.path.join(bin_dir, f"mineru{suffix}")],
+    )
+
+
+def _model_cache_ready(cache_dir: str) -> bool:
+    """探测 pipeline 模型缓存是否完整：模型目录存在且无半成品下载暂存目录。
+
+    依据 ModelScope 缓存布局探测；布局变化时返回 False，
+    由幂等的下载命令兜底（缓存完整时秒级增量校验后返回）。
+    """
+    models_dir = os.path.join(
+        cache_dir, "modelscope", "models", "OpenDataLab", "PDF-Extract-Kit-1___0", "models"
+    )
+    temp_dir = os.path.join(cache_dir, "modelscope", "models", "._____temp")
+    return os.path.isdir(models_dir) and not os.path.exists(temp_dir)
+
+
+def _run_model_download(task_id: str, task_dir: str, command: list[str], env: dict) -> bool:
+    """执行模型下载命令（仅首次使用），与转换分别计时。
+
+    返回 True 表示缓存就绪；False 表示已写入失败状态，调用方应终止本次任务。
+    """
+    sink: deque = deque(maxlen=30)  # 保留末尾输出用于失败诊断
+    proc = subprocess.Popen(
+        command + ["-s", "modelscope", "-m", "pipeline"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    readers = [
+        threading.Thread(target=_drain_stream, args=(proc.stdout, sink.append), daemon=True),
+        threading.Thread(target=_drain_stream, args=(proc.stderr, sink.append), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    timeout = settings.MINERU_MODEL_DOWNLOAD_TIMEOUT
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process(proc)
+        write_status_atomic(
+            task_dir, -1, f"模型下载超时（超过 {timeout // 60} 分钟），请检查网络后重试"
+        )
+        logger.error(f"模型下载超时: task_id={task_id} timeout={timeout}s")
+        return False
+
+    if returncode != 0:
+        write_status_atomic(task_dir, -1, "模型下载失败，请检查网络后重试")
+        logger.error(
+            f"模型下载失败: task_id={task_id} rc={returncode}\n" + "\n".join(sink)
+        )
+        return False
+
+    logger.info(f"模型下载完成: task_id={task_id}")
+    return True
+
+
+def _discard_partial_output(mineru_out: str):
+    """清理失败的半成品输出目录，保留 input.pdf 以便重试。"""
+    shutil.rmtree(mineru_out, ignore_errors=True)
 
 
 def _kill_process(proc: subprocess.Popen):
