@@ -21,6 +21,8 @@ from docx.shared import Inches, Pt, RGBColor
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from app.utils.html_table import html_tables_to_markdown
+
 
 _MAX_DATA_URI_SIZE = 10 * 1024 * 1024
 _MAX_IMAGE_WIDTH_INCHES = 6.0
@@ -513,8 +515,13 @@ def render_markdown_to_docx(
     base_dir: Path,
     output_path: Path,
 ) -> list[str]:
-    """将 Markdown 文本渲染为 DOCX，并返回非致命转换警告。"""
-    parser = MarkdownIt("commonmark", {"html": False})
+    """将 Markdown 文本渲染为 DOCX，并返回非致命转换警告。
+
+    规整的 HTML 表格先归一化为管道表格再渲染，保证 Word 输出真实表格；
+    其余原始 HTML 不执行，按忽略并警告处理。
+    """
+    markdown_content, _ = html_tables_to_markdown(markdown_content)
+    parser = MarkdownIt("commonmark", {"html": True})
     parser.enable(["table", "strikethrough"])
     tokens = parser.parse(markdown_content)
 

@@ -187,16 +187,41 @@ export async function getPreview(taskId: string): Promise<PreviewResponse> {
   return json.data as PreviewResponse
 }
 
-export async function downloadMd(taskId: string): Promise<void> {
+/**
+ * 下载 PDF 转 Markdown 结果。
+ * 携带当前编辑内容时后端以其为准；存在图片资源时返回 ZIP 包，否则返回单个 .md。
+ * 返回 missingTotal：转换结果中本就缺失、未包含在下载产物内的图片数量。
+ */
+export async function downloadMd(
+  taskId: string,
+  markdownContent?: string,
+): Promise<{ missingTotal: number }> {
   const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task_id: taskId }),
+    body: JSON.stringify({ task_id: taskId, markdown_content: markdownContent ?? null }),
   })
 
-  if (!res.ok) {
-    const json = await res.json()
-    throw new Error(json.message || '下载失败')
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '下载失败')
+    }
+    throw new Error(`下载失败（HTTP ${res.status}）`)
+  }
+
+  let missingTotal = 0
+  const missingHeader = res.headers.get('x-missing-assets')
+  if (missingHeader) {
+    try {
+      const parsed = JSON.parse(decodeURIComponent(missingHeader)) as { total?: number }
+      if (typeof parsed.total === 'number' && Number.isFinite(parsed.total)) {
+        missingTotal = Math.max(0, Math.floor(parsed.total))
+      }
+    } catch {
+      // 提示头异常时不阻塞下载
+    }
   }
 
   const disposition = res.headers.get('content-disposition')
@@ -204,13 +229,15 @@ export async function downloadMd(taskId: string): Promise<void> {
 
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-
   const a = document.createElement('a')
   a.href = url
   a.download = filename
+  document.body.appendChild(a)
   a.click()
-
+  document.body.removeChild(a)
   URL.revokeObjectURL(url)
+
+  return { missingTotal }
 }
 
 /* ════════════════════════════════════════

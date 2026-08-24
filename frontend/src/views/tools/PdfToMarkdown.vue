@@ -8,7 +8,7 @@ import { ref, computed } from 'vue'
 import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
-import { convertPdf, getPreview, getProgress } from '@/api/tools'
+import { convertPdf, getPreview, getProgress, downloadMd } from '@/api/tools'
 import type { PreviewResponse } from '@/api/tools'
 
 const markdown = new Marked(
@@ -77,6 +77,7 @@ const progressStage = ref('')
 /* ── 双栏编辑相关 ── */
 const viewMode = ref<ViewMode>('split')
 const editingMarkdown = ref('')
+const downloadWarning = ref('')
 
 /* ── 元素引用 ── */
 const leftEditorRef = ref<HTMLTextAreaElement | null>(null)
@@ -224,19 +225,22 @@ async function pollProgress(taskId: string): Promise<boolean> {
 }
 
 /**
- * 下载编辑后的 Markdown 内容（前端 Blob 下载）
+ * 下载转换结果：以当前编辑内容为准；
+ * 存在图片资源时后端返回 ZIP 包（Markdown + images/），否则返回单个 .md；
+ * 转换结果中本就缺失的图片会通过提示告知用户。
  */
 async function handleDownload() {
-  if (!editingMarkdown.value) return
-  const blob = new Blob([editingMarkdown.value], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = (selectedFile.value?.name || 'output').replace(/\.pdf$/i, '.md')
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  if (!currentTaskId.value || !editingMarkdown.value) return
+  downloadWarning.value = ''
+  try {
+    const { missingTotal } = await downloadMd(currentTaskId.value, editingMarkdown.value)
+    if (missingTotal > 0) {
+      downloadWarning.value = `有 ${missingTotal} 个图片资源在转换结果中缺失，未包含在下载文件里`
+    }
+  } catch (e: any) {
+    errorMessage.value = e.message || '下载失败'
+    currentState.value = 'error'
+  }
 }
 
 function resetUpload() {
@@ -249,6 +253,7 @@ function resetUpload() {
   progressValue.value = 0
   progressStage.value = ''
   editingMarkdown.value = ''
+  downloadWarning.value = ''
 }
 </script>
 
@@ -365,7 +370,7 @@ function resetUpload() {
           @click="handleDownload"
         >
           <font-awesome-icon :icon="['fas', 'download']" />
-          下载 .md
+          {{ preview.image_count > 0 ? '下载（ZIP 含图片）' : '下载 .md' }}
         </button>
         <button
           class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-transparent px-[22px] py-[9px] font-inherit text-[13px] font-medium text-text-secondary transition-all duration-200 hover:border-[#999] hover:text-text"
@@ -382,6 +387,15 @@ function resetUpload() {
           <span class="mr-4"><font-awesome-icon :icon="['fas', 'table']" class="mr-1" />{{ preview.table_count }} 个表格</span>
           <span><font-awesome-icon :icon="['far', 'image']" class="mr-1" />{{ preview.image_count }} 张图片</span>
         </div>
+      </div>
+
+      <!-- 下载提示：转换结果中缺失的图片资源 -->
+      <div
+        v-if="downloadWarning"
+        class="mb-3 flex items-start gap-2 rounded-lg border border-[#F2E3C9] bg-[#FFF9EF] px-4 py-2.5 text-[12px] text-[#8A6D3B]"
+      >
+        <font-awesome-icon :icon="['fas', 'triangle-exclamation']" class="mt-0.5" />
+        <span>{{ downloadWarning }}</span>
       </div>
 
       <!-- 双栏预览容器 -->

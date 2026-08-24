@@ -37,6 +37,10 @@ def convert_pdf(file: UploadFile):
     task_dir = os.path.join(TEMP_DIR, "tasks", task_id)
     os.makedirs(task_dir, exist_ok=True)
 
+    # 记录原始文件名，供下载命名使用
+    with open(os.path.join(task_dir, "meta.txt"), "w", encoding="utf-8") as f:
+        f.write(safe_name)
+
     # 保存原始 PDF 到 uploads/（带 task_id 前缀）
     upload_filename = f"{task_id}-{safe_name}"
     upload_path = os.path.join(UPLOADS_DIR, upload_filename)

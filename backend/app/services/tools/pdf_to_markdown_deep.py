@@ -16,6 +16,7 @@ from fastapi import UploadFile
 from app.core.config import settings
 from app.utils.file import save_file, safe_filename
 from app.utils.exception import ServiceException
+from app.utils.html_table import html_tables_to_markdown
 from app.utils.logger_config import setup_logger
 from app.schemas.response import ErrorCode
 from app.schemas.tools.pdf_to_markdown import ConvertResponse, GetProgressResponse
@@ -51,6 +52,10 @@ def convert_pdf_deep(file: UploadFile):
     task_id = uuid.uuid4().hex[:12]
     task_dir = os.path.join(TEMP_DIR, "tasks", task_id)
     os.makedirs(task_dir, exist_ok=True)
+
+    # 记录原始文件名，供下载命名使用
+    with open(os.path.join(task_dir, "meta.txt"), "w", encoding="utf-8") as f:
+        f.write(safe_name)
 
     # 保存原始 PDF 到 uploads/（带 task_id 前缀）
     upload_filename = f"{task_id}-{safe_name}"
@@ -377,6 +382,17 @@ def _collect_output(mineru_out: str, task_dir: str):
                 md_content = ""
             if md_content:
                 _copy_referenced_assets(md_dir, md_content, task_dir)
+
+                # MinerU 表格输出为原始 HTML，统一归一化为管道表格，
+                # 保证预览、编辑和 Markdown 转 Word 都能识别
+                normalized, table_count = html_tables_to_markdown(md_content)
+                if normalized != md_content:
+                    try:
+                        with open(os.path.join(task_dir, f), "w", encoding="utf-8") as fw:
+                            fw.write(normalized)
+                        logger.info(f"HTML 表格已归一化为管道表格: tables={table_count}")
+                    except OSError:
+                        logger.warning("归一化 HTML 表格后写回 output 失败")
 
             # 重命名主 md 为 output.md，清理多余 md
             output_path = os.path.join(task_dir, "output.md")

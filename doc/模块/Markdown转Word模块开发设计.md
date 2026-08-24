@@ -16,7 +16,7 @@
 | API 契约 | 接口统一使用 POST；普通响应使用 `{code, message, data}`，由 `success()` / `error()` 构造。 |
 | 文件任务 | 文件工具使用 `get_task_dir(task_id)` 保存任务输入、资源、中间结果和下载产物。 |
 | 临时数据清理 | `cleanup_expired_temp()` 在服务启动时清理超过 24 小时的临时任务。 |
-| Markdown 解析 | 依赖 `markdown-it-py`，使用 CommonMark 解析器并启用表格、删除线扩展。 |
+| Markdown 解析 | 依赖 `markdown-it-py`，使用 CommonMark 解析器并启用表格、删除线扩展；解析前由 `html_table.py` 把规整 HTML 表格归一化为管道表格，残余 HTML 忽略并记录警告。 |
 | DOCX 生成 | 使用 `python-docx` 生成文档并校验 `[Content_Types].xml`、`word/document.xml`。 |
 | DOC 转换 | 选择 DOC 时先生成 DOCX，再调用配置中的 LibreOffice，以 `MS Word 97` 格式转换。 |
 | 前端工具注册 | `frontend/src/router/tools.ts` 从后端工具列表合并本地组件注册表并动态生成工具路由。 |
@@ -45,6 +45,7 @@ DOCX 是主转换产物。DOC 仅作为兼容输出格式，通过本地 LibreOf
 
 3. **Markdown 转 DOCX**
    - 支持标题、段落、粗体、斜体、删除线、链接、无序/有序列表、引用、分割线、代码块、表格和图片。
+   - 规整的原始 HTML 表格（如 MinerU 输出的 `<table>` 结构）自动转换为 Word 表格；合并单元格按展开网格处理（锚点保留文本、覆盖位置留空），其余原始 HTML 忽略并返回警告。
    - 本地相对图片嵌入 DOCX；远程图片不主动下载并返回警告。
    - 支持符合限制的 Data URI 图片；单个 Data URI 图片不超过 10MB。
    - 生成结果后校验 DOCX 压缩包结构和核心文档文件。
@@ -77,7 +78,7 @@ DOCX 是主转换产物。DOC 仅作为兼容输出格式，通过本地 LibreOf
 
 - 不支持 ZIP 中多个 Markdown 文档批量转换。
 - 不抓取远程图片，不请求 Markdown 中的外部 URL。
-- 不执行原始 HTML、脚本或其他可执行内容。
+- 不执行原始 HTML、脚本或其他可执行内容；仅将规整 HTML 表格转换为 Word 表格，其余 HTML 忽略并给出警告。
 - 不承诺完整 GFM、脚注、数学公式、复杂 HTML、宏、嵌入式办公对象或高级 Markdown 扩展的版式还原。
 - 不提供 Markdown 在线编辑器、长期文件库、账号同步、云端转换或版本历史。
 - 不把 DOC 作为独立原生生成格式；DOC 始终由 DOCX 经过 LibreOffice 转换得到。
@@ -88,7 +89,7 @@ DOCX 是主转换产物。DOC 仅作为兼容输出格式，通过本地 LibreOf
 - Router 负责接收 multipart/form-data、调用 Service、封装统一响应和返回 `FileResponse`。
 - Schema 负责下载请求和转换结果的接口字段约束。
 - Service 负责文件读取、ZIP 安全解包、任务目录、Markdown 内容读取、DOCX/DOC 生成、结果校验和下载路径校验。
-- `markdown_docx.py` 负责 Markdown Token 到 DOCX 段落、列表、表格、代码、链接和图片的映射。
+- `markdown_docx.py` 负责 Markdown Token 到 DOCX 段落、列表、表格、代码、链接和图片的映射；`html_table.py` 负责渲染前的 HTML 表格归一化。
 - 通用临时任务工具负责任务 ID、任务目录和过期清理，不负责 Markdown 语法或 Word 样式。
 - LibreOffice 只负责 DOCX 到 DOC 的兼容格式转换，不负责 Markdown 解析。
 
@@ -98,12 +99,13 @@ DOCX 是主转换产物。DOC 仅作为兼容输出格式，通过本地 LibreOf
 2. `.md`、`.markdown` 文件能生成可打开的 DOCX。
 3. 包含一个 Markdown 文件和 `images/` 资源的 ZIP 能正确嵌入相对图片。
 4. 标题、段落、列表、引用、表格、代码块、链接和常用行内格式能生成对应 Word 结构。
-5. 选择 DOC 且 LibreOffice 可用时能生成非空 DOC 文件；选择 DOCX 时不依赖 LibreOffice。
-6. ZIP 路径穿越、符号链接、多个 Markdown 文件、超过条目数或解压体积限制时拒绝处理。
-7. 远程图片、缺失图片和不支持内容不会导致任务无提示失败，页面能展示转换警告。
-8. 非 UTF-8 Markdown、空文件、超大文件、损坏 ZIP、转换超时和缺少 LibreOffice 时返回项目统一错误结构。
-9. 下载只能访问合法任务目录中的已完成结果，非法或过期任务不能读取其他路径。
-10. 任务过期后，输入副本、解包资源、中间 DOCX、DOC 和元数据均能按统一规则清理。
+5. 含规整 HTML 表格（如 MinerU 输出的 `<table>` 结构）的 Markdown 能生成对应 Word 表格；残余 HTML 被忽略并出现在转换警告中。
+6. 选择 DOC 且 LibreOffice 可用时能生成非空 DOC 文件；选择 DOCX 时不依赖 LibreOffice。
+7. ZIP 路径穿越、符号链接、多个 Markdown 文件、超过条目数或解压体积限制时拒绝处理。
+8. 远程图片、缺失图片和不支持内容不会导致任务无提示失败，页面能展示转换警告。
+9. 非 UTF-8 Markdown、空文件、超大文件、损坏 ZIP、转换超时和缺少 LibreOffice 时返回项目统一错误结构。
+10. 下载只能访问合法任务目录中的已完成结果，非法或过期任务不能读取其他路径。
+11. 任务过期后，输入副本、解包资源、中间 DOCX、DOC 和元数据均能按统一规则清理。
 
 ---
 
@@ -119,6 +121,7 @@ DOCX 是主转换产物。DOC 仅作为兼容输出格式，通过本地 LibreOf
 | `backend/app/schemas/tools/markdown_to_word.py` | 定义下载请求和转换结果 Schema | 已接入 |
 | `backend/app/services/tools/markdown_to_word.py` | 文件校验、ZIP 解包、Markdown 读取、任务目录、DOCX/DOC 转换、结果校验和下载 | 已接入 |
 | `backend/app/utils/markdown_docx.py` | 使用 Markdown Token 生成 DOCX 段落、列表、表格、代码、链接和图片 | 已接入 |
+| `backend/app/utils/html_table.py` | 将规整 HTML 表格归一化为管道表格，供渲染前预处理复用 | 已接入 |
 | `backend/app/services/tools/list.py` | 注册 `markdown-to-word` 工具条目 | 已接入 |
 | `backend/app/main.py` | 注册 Router；沿用现有 LibreOffice 检测和应用生命周期 | 已接入 |
 | `frontend/src/api/tools.ts` | 提交 multipart 请求、解包响应、处理 Word 二进制下载和文件名 | 已接入 |
@@ -166,7 +169,8 @@ flowchart TD
     ZipCheck --> FindMd[查找唯一 Markdown 文件]
     SaveMd --> Read[按 UTF-8 读取 Markdown]
     FindMd --> Read
-    Read --> Parse[markdown-it-py 解析 Token]
+    Read --> Normalize[归一化 HTML 表格为管道表格]
+    Normalize --> Parse[markdown-it-py 解析 Token]
     Parse --> Render[python-docx 生成 DOCX]
     Render --> VerifyDocx[校验 DOCX 结构]
     VerifyDocx --> Format{输出格式}

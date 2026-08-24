@@ -23,6 +23,13 @@ class GetProgressRequest(BaseModel):
     task_id: str = Field(..., description="任务 ID")
 
 
+class DownloadRequest(BaseModel):
+    task_id: str = Field(..., description="任务 ID")
+    markdown_content: str | None = Field(
+        None, description="用户编辑后的 Markdown 内容；提供时下载以该内容为准"
+    )
+
+
 # ========== 响应类（Response）==========
 
 

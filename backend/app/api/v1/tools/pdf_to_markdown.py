@@ -1,5 +1,8 @@
 """PDF 转 Markdown 接口"""
 
+import json
+from urllib.parse import quote
+
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import FileResponse
 
@@ -10,6 +13,7 @@ from app.schemas.tools.pdf_to_markdown import (
     GetPreviewRequest,
     GetProgressResponse,
     GetProgressRequest,
+    DownloadRequest,
 )
 from app.services.tools import pdf_to_markdown as services_pdf
 from app.services.tools import pdf_to_markdown_deep as services_pdf_deep
@@ -60,16 +64,25 @@ def get_preview(body: GetPreviewRequest):
         return error(code=e.code, message=e.message)
 
 
+_MISSING_ASSETS_HEADER = "X-Missing-Assets"
+_MISSING_ASSETS_NAMES_LIMIT = 10
+
+
 @router.post("/download")
-def download_md(body: GetPreviewRequest):
-    """下载 Markdown 文件"""
+def download_md(body: DownloadRequest):
+    """下载 Markdown；存在图片等引用资源时返回 ZIP 包（含当前编辑内容）"""
     logger.info(f"API 下载请求: task_id={body.task_id}")
     try:
-        file_path = services_pdf.download_md(body.task_id)
-        return FileResponse(
-            path=file_path,
-            filename=f"{body.task_id}.md",
-            media_type="text/markdown",
+        file_path, filename, media_type, missing = services_pdf.download_md(
+            body.task_id, body.markdown_content
         )
+        response = FileResponse(path=file_path, filename=filename, media_type=media_type)
+        if missing:
+            # 通过响应头告知前端解析结果中本就缺失、未打入 ZIP 的图片
+            payload = {"total": len(missing), "names": missing[:_MISSING_ASSETS_NAMES_LIMIT]}
+            response.headers[_MISSING_ASSETS_HEADER] = quote(
+                json.dumps(payload, ensure_ascii=False)
+            )
+        return response
     except ServiceException as e:
         return error(code=e.code, message=e.message)
