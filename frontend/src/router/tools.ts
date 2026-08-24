@@ -15,6 +15,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/PdfToWord.vue'),
   },
+  'markdown-to-word': {
+    icon: ['fas', 'file-word'],
+    component: () => import('@/views/tools/MarkdownToWord.vue'),
+  },
   'word-to-pdf': {
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/WordToPdf.vue'),
@@ -50,7 +54,7 @@ export async function initToolConfigs(): Promise<ToolConfig[]> {
         name: remote.name,
         displayName: remote.display_name,
         description: remote.description,
-        icon: local?.icon ?? (remote.icon as string).split(' ') as unknown as string[],
+        icon: local?.icon ?? ((remote.icon as string).split(' ') as unknown as string[]),
         component: local?.component ?? (() => Promise.reject(new Error(`未知工具: ${remote.id}`))),
         sidebarDefaultCollapsed: false,
         available: remote.available,

@@ -29,6 +29,16 @@ export interface PdfToWordConvertResponse {
   warnings: string[]
 }
 
+export type MarkdownToWordOutputFormat = 'docx' | 'doc'
+
+export interface MarkdownToWordConvertResponse {
+  task_id: string
+  filename: string
+  output_filename: string
+  output_format: MarkdownToWordOutputFormat
+  warnings: string[]
+}
+
 export interface PreviewResponse {
   markdown_content: string
   page_count: number
@@ -72,10 +82,7 @@ export interface ToolItem {
  * 优先处理 RFC 5987 的 filename*=utf-8''（中文文件名时 FastAPI/Starlette 输出此格式），
  * 失败时回退到普通 filename= 或默认名。
  */
-function parseContentDispositionFilename(
-  disposition: string | null,
-  fallback: string,
-): string {
+function parseContentDispositionFilename(disposition: string | null, fallback: string): string {
   if (!disposition) return fallback
   const star = /filename\*=utf-8''([^;]+)/i.exec(disposition)
   if (star) {
@@ -85,17 +92,12 @@ function parseContentDispositionFilename(
       return fallback
     }
   }
-  const plain =
-    /filename="([^"]*)"/i.exec(disposition) ||
-    /filename=([^;]+)/i.exec(disposition)
+  const plain = /filename="([^"]*)"/i.exec(disposition) || /filename=([^;]+)/i.exec(disposition)
   if (plain) return plain[1].trim()
   return fallback
 }
 
-export async function generateQrCode(
-  content?: string,
-  file?: File,
-): Promise<QrCodeResponse> {
+export async function generateQrCode(content?: string, file?: File): Promise<QrCodeResponse> {
   if ((content === undefined) === (file === undefined)) {
     throw new Error('请提供文本或文件，且只能选择一种内容')
   }
@@ -250,6 +252,61 @@ export async function downloadWord(taskId: string): Promise<void> {
 
   const disposition = res.headers.get('content-disposition')
   const filename = parseContentDispositionFilename(disposition, `${taskId}.docx`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+/* ════════════════════════════════════════
+   Markdown 转 Word API
+   ════════════════════════════════════════ */
+
+export async function convertMarkdownToWord(
+  file: File,
+  outputFormat: MarkdownToWordOutputFormat,
+): Promise<MarkdownToWordConvertResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('output_format', outputFormat)
+
+  const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-word/convert`, {
+    method: 'POST',
+    body: formData,
+  })
+  const json: ApiResponse<MarkdownToWordConvertResponse> = await res.json()
+  if (json.code !== 0) {
+    throw new Error(json.message || '转换失败')
+  }
+  return json.data as MarkdownToWordConvertResponse
+}
+
+export async function downloadMarkdownToWord(
+  taskId: string,
+  outputFormat: MarkdownToWordOutputFormat,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-word/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '下载失败')
+    }
+    throw new Error(`下载失败（HTTP ${res.status}）`)
+  }
+
+  const disposition = res.headers.get('content-disposition')
+  const filename = parseContentDispositionFilename(disposition, `${taskId}.${outputFormat}`)
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -566,9 +623,7 @@ export async function processIdPhoto(
   return json.data as IdPhotoResponse
 }
 
-export async function renderIdPhoto(
-  params: IdPhotoRenderParams,
-): Promise<IdPhotoResponse> {
+export async function renderIdPhoto(params: IdPhotoRenderParams): Promise<IdPhotoResponse> {
   const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -581,10 +636,7 @@ export async function renderIdPhoto(
   return json.data as IdPhotoResponse
 }
 
-export async function fetchIdPhotoFile(
-  taskId: string,
-  fileIndex: number,
-): Promise<Blob> {
+export async function fetchIdPhotoFile(taskId: string, fileIndex: number): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

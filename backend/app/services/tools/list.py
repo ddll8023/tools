@@ -45,6 +45,15 @@ _TOOLS = [
         available=True,
     ),
     ToolListItem(
+        id="markdown-to-word",
+        name="MarkdownToWord",
+        path="markdown-to-word",
+        display_name="Markdown 转 Word",
+        description="将 Markdown 文件或带 images 目录的 ZIP 转换为 DOCX 或 DOC",
+        icon="fas fa-file-word",
+        available=True,
+    ),
+    ToolListItem(
         id="image-converter",
         name="ImageConverter",
         path="image-converter",

@@ -29,4 +29,5 @@ dependencies = [
     "mtcnn-runtime>=1.0.0",
     "onnxruntime>=1.15.0",
     "numpy<=1.26.4",
+    "markdown-it-py>=3.0.0",
 ]

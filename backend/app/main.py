@@ -11,6 +11,7 @@ from app.api.v1.tools import word_to_pdf as router_word_to_pdf
 from app.api.v1.tools import image_converter as router_image_converter
 from app.api.v1.tools import epub_to_markdown as router_epub_to_markdown
 from app.api.v1.tools import pdf_to_word as router_pdf_to_word
+from app.api.v1.tools import markdown_to_word as router_markdown_to_word
 from app.api.v1.tools import qr_code as router_qr_code
 from app.api.v1.tools import id_photo as router_id_photo
 from app.schemas.response import ErrorCode
@@ -84,6 +85,7 @@ app.include_router(router_word_to_pdf.router)
 app.include_router(router_image_converter.router)
 app.include_router(router_epub_to_markdown.router)
 app.include_router(router_pdf_to_word.router)
+app.include_router(router_markdown_to_word.router)
 app.include_router(router_qr_code.router)
 app.include_router(router_id_photo.router)
 
