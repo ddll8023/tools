@@ -19,6 +19,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/MarkdownToWord.vue'),
   },
+  mindmap: {
+    icon: ['fas', 'diagram-project'],
+    component: () => import('@/views/tools/MindMap.vue'),
+  },
   'word-to-pdf': {
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/WordToPdf.vue'),

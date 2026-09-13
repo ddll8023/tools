@@ -54,6 +54,15 @@ _TOOLS = [
         available=True,
     ),
     ToolListItem(
+        id="mindmap",
+        name="MindMap",
+        path="mindmap",
+        display_name="思维导图",
+        description="将 Markdown 大纲转换为可编辑的本地思维导图",
+        icon="fas fa-diagram-project",
+        available=True,
+    ),
+    ToolListItem(
         id="image-converter",
         name="ImageConverter",
         path="image-converter",
