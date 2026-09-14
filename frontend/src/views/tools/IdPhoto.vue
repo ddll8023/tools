@@ -4,6 +4,8 @@
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { BaseSelect } from '@/components/common'
+import type { SelectOption } from '@/components/common'
 import {
   downloadIdPhotoFile,
   fetchIdPhotoFile,
@@ -44,6 +46,11 @@ const backgrounds: BackgroundOption[] = [
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const templates = ref<IdPhotoTemplateItem[]>([])
+const templateOptions = computed<SelectOption[]>(() => templates.value.map((template) => ({
+  value: template.id,
+  label: `${template.label} · ${template.description}`,
+})))
+const backgroundSelectOptions: SelectOption[] = backgrounds.map(({ value, label }) => ({ value, label }))
 const isLoadingTemplates = ref(true)
 const templateLoadError = ref('')
 const currentState = ref<PageState>('upload')
@@ -681,16 +688,13 @@ onBeforeUnmount(() => {
         <aside class="space-y-4" aria-label="证件照结果设置">
           <div>
             <label class="mb-2 block text-[12px] font-medium" for="result-template">照片规格</label>
-            <select
+            <BaseSelect
               id="result-template"
-              :value="templateId"
-              class="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-[13px] outline-none focus:border-primary"
-              @change="selectTemplate(($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="template in templates" :key="template.id" :value="template.id">
-                {{ template.label }} · {{ template.description }}
-              </option>
-            </select>
+              :model-value="templateId"
+              :options="templateOptions"
+              block
+              @change="selectTemplate"
+            />
             <div v-if="templateId === 'custom'" class="mt-2 grid grid-cols-2 gap-2">
               <label class="text-[11px] text-text-secondary">
                 宽度（px）
@@ -765,15 +769,12 @@ onBeforeUnmount(() => {
 
           <div>
             <label class="mb-2 block text-[12px] font-medium" for="result-background">背景色</label>
-            <select
+            <BaseSelect
               id="result-background"
               v-model="backgroundSelection"
-              class="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-[13px] outline-none focus:border-primary"
-            >
-              <option v-for="background in backgrounds" :key="background.value" :value="background.value">
-                {{ background.label }}
-              </option>
-            </select>
+              :options="backgroundSelectOptions"
+              block
+            />
             <input
               v-if="backgroundSelection === 'custom'"
               v-model="customColor"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import {
+  BRANCH_COLORS,
   buildSvgNodeTextString,
   buildSvgTextLineString,
   getLevel1TextColor,
@@ -114,7 +115,7 @@ const tagBadges = computed(() => {
   const widths = tags.map((tag) => tag.length * tagFontSize * 0.65 + 10)
   const totalWidth = widths.reduce((sum, width) => sum + width, 0) + (tags.length - 1) * 4
   let x = -totalWidth / 2
-  const colors = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#6366F1']
+  const colors = BRANCH_COLORS
 
   return tags.map((tag, index) => {
     const width = widths[index]

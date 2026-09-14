@@ -161,7 +161,7 @@ async function handleExport(format: MindMapExportFormat) {
 
 <template>
   <main
-    class="flex h-full min-h-0 flex-col overflow-hidden bg-[#f7f7f5]"
+    class="flex h-full min-h-0 flex-col overflow-hidden bg-bg"
     @dragover.prevent
     @drop.prevent="handleDrop"
   >
@@ -178,9 +178,10 @@ async function handleExport(format: MindMapExportFormat) {
       @change="handleFileChange"
     />
 
-    <div class="min-h-0 flex-1 overflow-hidden">
+    <div class="min-h-0 flex-1 overflow-hidden bg-bg">
       <MindMap
         ref="mindMapRef"
+        theme="light"
         v-model:markdown="markdown"
         @import-request="openFilePicker"
         @export-request="handleExport"

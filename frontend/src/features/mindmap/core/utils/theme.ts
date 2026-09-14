@@ -1,15 +1,15 @@
-// Muted branch palette matching the reference mind-map style.
+// Warm, muted branch colors that stay within the application's orange-neutral palette.
 export const BRANCH_COLORS = [
-  "#8B9E6F", // 橄榄绿
-  "#CF7465", // 珊瑚红
-  "#DAB16D", // 暖金色
-  "#738BBC", // 灰蓝色
-  "#9F80B2", // 雾紫色
-  "#79A39A", // 灰青色
-  "#C28B9E", // 藕粉色
-  "#8B9FBF", // 钢蓝色
-  "#C58E63", // 陶土色
-  "#829A78", // 鼠尾草绿
+  "#F5A623", // 品牌橙
+  "#C87961", // 陶土红
+  "#B18B52", // 柔和金
+  "#82996F", // 鼠尾草绿
+  "#778D9B", // 灰蓝
+  "#9B82A8", // 雾紫
+  "#C58B96", // 藕粉
+  "#6F9893", // 灰青
+  "#B57B5F", // 陶土
+  "#9A9E6B", // 橄榄黄
 ];
 
 export interface ThemeColors {
@@ -78,14 +78,14 @@ const SHARED = {
   root: {
     fontSize: 40,
     fontWeight: 600,
-    fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     paddingH: 36,
     paddingV: 20,
   },
   node: {
     fontSize: 18,
     fontWeight: 400,
-    fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     paddingH: 8,
     paddingV: 6,
   },
@@ -106,67 +106,67 @@ const SHARED = {
 
 const LIGHT_THEME: ThemeColors = {
   ...SHARED,
-  root: { ...SHARED.root, bgColor: "#3E4553", textColor: "#FFFFFF" },
-  node: { ...SHARED.node, textColor: "#4B4B4B" },
-  canvas: { bgColor: "#FFFFFF" },
+  root: { ...SHARED.root, bgColor: "#F5A623", textColor: "#FFFFFF" },
+  node: { ...SHARED.node, textColor: "#2D2D2D" },
+  canvas: { bgColor: "#FAFAF8" },
   controls: {
-    bgColor: "rgba(255, 255, 255, 0.9)",
-    textColor: "#555",
-    hoverBg: "rgba(0, 0, 0, 0.08)",
-    activeBg: "rgba(0, 0, 0, 0.08)",
+    bgColor: "rgba(255, 255, 255, 0.96)",
+    textColor: "#2D2D2D",
+    hoverBg: "#F5F5F2",
+    activeBg: "#FDEBD0",
   },
   contextMenu: {
-    bgColor: "rgba(255, 255, 255, 0.95)",
-    textColor: "#333",
-    hoverBg: "rgba(0, 0, 0, 0.06)",
-    borderColor: "rgba(0, 0, 0, 0.08)",
-    shadowColor: "rgba(0, 0, 0, 0.15)",
+    bgColor: "#FFFFFF",
+    textColor: "#2D2D2D",
+    hoverBg: "#F5F5F2",
+    borderColor: "#EBEBE7",
+    shadowColor: "rgba(45, 45, 45, 0.12)",
   },
   addBtn: {
-    fill: "rgba(200, 200, 220, 0.6)",
-    hoverFill: "rgba(180, 180, 200, 0.8)",
-    iconColor: "#666",
+    fill: "#FDEBD0",
+    hoverFill: "#F5A623",
+    iconColor: "#D4890A",
   },
   selection: {
-    strokeColor: "#4A90D9",
-    fillColor: "rgba(74, 144, 217, 0.08)",
+    strokeColor: "#F5A623",
+    fillColor: "rgba(245, 166, 35, 0.12)",
   },
   highlight: {
-    textColor: "#fac800", // amber-800
-    bgColor: "rgba(252, 211, 77, 0.2)", // amber-300/40
+    textColor: "#D4890A",
+    bgColor: "rgba(245, 166, 35, 0.18)",
   },
 };
 
 const DARK_THEME: ThemeColors = {
   ...SHARED,
-  root: { ...SHARED.root, bgColor: "#4A6FA5", textColor: "#FFFFFF" },
-  node: { ...SHARED.node, textColor: "#E0E0E0" },
-  canvas: { bgColor: "#1a1a2e" },
+  root: { ...SHARED.root, bgColor: "#D4890A", textColor: "#FFFFFF" },
+  node: { ...SHARED.node, textColor: "#FAFAF8" },
+  canvas: { bgColor: "#2D2D2D" },
   controls: {
-    bgColor: "rgba(30, 30, 45, 0.9)",
-    textColor: "#ccc",
-    hoverBg: "rgba(255, 255, 255, 0.1)",
-    activeBg: "rgba(255, 255, 255, 0.12)",
+    bgColor: "rgba(45, 45, 45, 0.96)",
+    textColor: "#FAFAF8",
+    hoverBg: "rgba(255, 255, 255, 0.08)",
+    activeBg: "rgba(245, 166, 35, 0.22)",
   },
   contextMenu: {
-    bgColor: "rgba(35, 35, 50, 0.95)",
-    textColor: "#ddd",
+    bgColor: "#353532",
+    textColor: "#FAFAF8",
     hoverBg: "rgba(255, 255, 255, 0.08)",
-    borderColor: "rgba(255, 255, 255, 0.1)",
-    shadowColor: "rgba(0, 0, 0, 0.4)",
+    borderColor: "rgba(255, 255, 255, 0.16)",
+    shadowColor: "rgba(0, 0, 0, 0.35)",
   },
   addBtn: {
-    fill: "rgba(100, 100, 130, 0.6)",
-    hoverFill: "rgba(120, 120, 150, 0.8)",
-    iconColor: "#aaa",
+    fill: "rgba(245, 166, 35, 0.22)",
+    hoverFill: "rgba(245, 166, 35, 0.38)",
+    iconColor: "#FDEBD0",
   },
   selection: {
-    strokeColor: "#5B9BD5",
-    fillColor: "rgba(91, 155, 213, 0.15)",
+    strokeColor: "#F5A623",
+    fillColor: "rgba(245, 166, 35, 0.2)",
   },
   highlight: {
-    textColor: "#fcd34d", // amber-300
-    bgColor: "rgba(251, 191, 36, 0.2)", // amber-400/20
+    textColor: "#FDEBD0",
+    bgColor: "rgba(245, 166, 35, 0.22)",
   },
 };
 
@@ -174,20 +174,8 @@ export function getTheme(mode: "light" | "dark"): ThemeColors {
   return mode === "dark" ? DARK_THEME : LIGHT_THEME;
 }
 
-// The reference palette uses dark text on the olive and gold cards, and light
-// text on the remaining first-level branch colors.
-const LEVEL1_TEXT_COLORS = [
-  "#20291A",
-  "#FFFFFF",
-  "#242016",
-  "#FFFFFF",
-  "#FFFFFF",
-  "#FFFFFF",
-  "#20291A",
-  "#FFFFFF",
-  "#242016",
-  "#FFFFFF",
-];
+// Keep first-level labels aligned with the application's dark text color.
+const LEVEL1_TEXT_COLORS = BRANCH_COLORS.map(() => "#2D2D2D");
 
 function getFallbackLevel1TextColor(color: string): string {
   const match = color.trim().match(/^#([0-9a-f]{6})$/i);
@@ -200,7 +188,7 @@ function getFallbackLevel1TextColor(color: string): string {
       : Math.pow((value + 0.055) / 1.055, 2.4);
   });
   const luminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-  return luminance > 0.42 ? "#242016" : "#FFFFFF";
+  return luminance > 0.42 ? "#2D2D2D" : "#FFFFFF";
 }
 
 export function getLevel1TextColor(color: string, branchIndex?: number): string {
@@ -248,6 +236,7 @@ export function generateCSSVariables(
     '--mindmap-controls-bg': theme.controls.bgColor,
     '--mindmap-controls-text': theme.controls.textColor,
     '--mindmap-controls-hover': theme.controls.hoverBg,
+    '--mindmap-controls-active': theme.controls.activeBg,
     '--mindmap-ctx-bg': theme.contextMenu.bgColor,
     '--mindmap-ctx-text': theme.contextMenu.textColor,
     '--mindmap-ctx-hover': theme.contextMenu.hoverBg,
@@ -268,7 +257,7 @@ export function generateExportStyles(theme: ThemeColors): string {
   return [
     `.mindmap-edge { stroke-width: ${theme.connection.strokeWidth}; stroke-linecap: round; fill: none; }`,
     `.mindmap-node-underline { stroke-width: 2.5; stroke-linecap: round; }`,
-    `.mindmap-code-bg { fill: rgba(128,128,128,0.12); }`,
+    `.mindmap-code-bg { fill: ${theme.controls.hoverBg}; }`,
     `.mindmap-highlight-bg { fill: ${theme.highlight.bgColor}; }`,
     `.mindmap-edge-label { pointer-events: none; font-family: ${theme.node.fontFamily}; }`,
   ].join('\n    ');

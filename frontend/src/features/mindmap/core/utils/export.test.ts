@@ -77,7 +77,7 @@ theme: dark
 
     expect(svg).toContain('Root')
     expect(svg).toContain('Child')
-    expect(svg).toContain('fill="#1a1a2e"')
+    expect(svg).toContain('fill="#2D2D2D"')
   })
 
   it('exports the full tree by default even when nodes are collapsed', () => {

@@ -1,16 +1,9 @@
 import type { MindMapPlugin } from "./types";
 import { escapeXml } from "../utils/inline-markdown";
 import { measureNodeContent } from '../utils/content-layout';
+import { BRANCH_COLORS } from '../utils/theme';
 
 const TAG_TRAILING_RE = /((?:\s+#[\w-]+)+)$/;
-const TAG_COLORS = [
-  "#3B82F6",
-  "#8B5CF6",
-  "#EC4899",
-  "#F59E0B",
-  "#10B981",
-  "#6366F1",
-];
 
 export const tagsPlugin: MindMapPlugin = {
   name: "tags",
@@ -87,7 +80,7 @@ export const tagsPlugin: MindMapPlugin = {
     for (let i = 0; i < node.tags.length; i++) {
       const tag = node.tags[i];
       const tagWidth = tagWidths[i];
-      const color = TAG_COLORS[i % TAG_COLORS.length];
+      const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
 
       parts.push(
         `<rect x="${tagX}" y="${tagY}" width="${tagWidth}" height="${tagHeight}" rx="3" fill="${color}" opacity="0.15"/>`,

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { BaseSelect } from '@/components/common'
+import type { SelectOption } from '@/components/common'
 import MindMapTextEditor from './MindMapTextEditor.vue'
 import MindMapViewer from './MindMapViewer.vue'
 import {
@@ -28,6 +30,19 @@ interface Props {
 }
 
 type MindMapExportFormat = 'markdown' | 'xmind' | 'svg' | 'png'
+
+const exportOptions: SelectOption[] = [
+  { value: 'markdown', label: 'Markdown' },
+  { value: 'xmind', label: 'XMind' },
+  { value: 'svg', label: 'SVG' },
+  { value: 'png', label: 'PNG' },
+]
+
+const directionOptions: SelectOption[] = [
+  { value: 'right', label: '向右展开' },
+  { value: 'left', label: '向左展开' },
+  { value: 'both', label: '两侧展开' },
+]
 
 const DEFAULT_MARKDOWN = `思维导图
 - 从 Markdown 开始
@@ -66,6 +81,7 @@ const localMarkdown = ref(
   ?? (props.data ? toMarkdownMultiRoot(normalizeData(props.data), props.plugins) : DEFAULT_MARKDOWN),
 )
 const direction = ref<LayoutDirection>(props.defaultDirection)
+const exportFormat = ref('')
 const viewerRef = ref<InstanceType<typeof MindMapViewer> | null>(null)
 const editorCollapsed = ref(false)
 
@@ -123,12 +139,16 @@ function toggleEditor() {
   requestAnimationFrame(() => viewerRef.value?.fitView())
 }
 
-function handleExportSelect(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const format = select.value as MindMapExportFormat
-  select.value = ''
+function handleExportSelect(format: string) {
+  exportFormat.value = ''
   if (format === 'markdown' || format === 'xmind' || format === 'svg' || format === 'png') {
     emit('exportRequest', format)
+  }
+}
+
+function handleDirectionSelect(value: string) {
+  if (value === 'left' || value === 'right' || value === 'both') {
+    handleDirectionChange(value)
   }
 }
 
@@ -171,23 +191,26 @@ defineExpose({
         <h2>实时思维导图</h2>
       </div>
       <div class="mindmap-workspace-actions">
-        <button type="button" class="mindmap-workspace-button" @click="emit('importRequest')">
+        <button type="button" class="mindmap-workspace-button mindmap-workspace-button--primary" @click="emit('importRequest')">
           导入
         </button>
-        <select class="mindmap-workspace-button" aria-label="导出思维导图" value="" @change="handleExportSelect">
-          <option value="" disabled>导出</option>
-          <option value="markdown">Markdown</option>
-          <option value="xmind">XMind</option>
-          <option value="svg">SVG</option>
-          <option value="png">PNG</option>
-        </select>
+        <BaseSelect
+          v-model="exportFormat"
+          :options="exportOptions"
+          placeholder="导出"
+          size="sm"
+          aria-label="导出思维导图"
+          @change="handleExportSelect"
+        />
         <label class="mindmap-direction-control">
           <span>布局</span>
-          <select :value="direction" @change="handleDirectionChange(($event.target as HTMLSelectElement).value as LayoutDirection)">
-            <option value="right">向右展开</option>
-            <option value="left">向左展开</option>
-            <option value="both">两侧展开</option>
-          </select>
+          <BaseSelect
+            :model-value="direction"
+            :options="directionOptions"
+            size="sm"
+            aria-label="布局方向"
+            @change="handleDirectionSelect"
+          />
         </label>
         <button type="button" class="mindmap-workspace-button" @click="toggleEditor">
           {{ editorCollapsed ? '显示编辑器' : '隐藏编辑器' }}
@@ -246,7 +269,9 @@ defineExpose({
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: var(--color-surface, #fff);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
 }
 
 .mindmap-workspace-toolbar {
@@ -255,7 +280,8 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid var(--color-border, #ebebe7);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
   padding: 10px 16px;
 }
 
@@ -279,45 +305,56 @@ defineExpose({
 .mindmap-workspace-title h2 {
   margin: 0;
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .mindmap-workspace-status {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #52c41a;
-  box-shadow: 0 0 0 4px rgba(82, 196, 26, 0.12);
+  background: var(--color-primary);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
 .mindmap-direction-control {
   gap: 6px;
-  color: var(--color-text-secondary, #999);
+  color: var(--color-text-secondary);
   font-size: 12px;
-}
-
-.mindmap-direction-control select,
-.mindmap-workspace-button {
-  border: 1px solid var(--color-border, #ebebe7);
-  border-radius: 7px;
-  background: var(--color-surface, #fff);
-  color: var(--color-text, #2d2d2d);
-  font: inherit;
-  font-size: 12px;
-}
-
-.mindmap-direction-control select {
-  padding: 6px 8px;
 }
 
 .mindmap-workspace-button {
   cursor: pointer;
-  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 12px;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
 }
 
 .mindmap-workspace-button:hover {
-  border-color: var(--color-primary, #f5a623);
-  color: var(--color-primary-dark, #d4890a);
+  border-color: var(--color-primary);
+  background: var(--color-hover);
+  color: var(--color-primary-dark);
+}
+
+.mindmap-workspace-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.mindmap-workspace-button--primary {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.mindmap-workspace-button--primary:hover {
+  border-color: var(--color-primary-dark);
+  background: var(--color-primary-dark);
+  color: #fff;
 }
 
 .mindmap-workspace-grid {
@@ -336,27 +373,27 @@ defineExpose({
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  border-right: 1px solid var(--color-border, #ebebe7);
-  background: var(--color-bg, #fafaf8);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
 }
 
 .mindmap-panel-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--color-border, #ebebe7);
+  border-bottom: 1px solid var(--color-border);
   padding: 12px 14px;
 }
 
 .mindmap-panel-heading h3 {
   margin: 0;
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .mindmap-panel-heading span,
 .mindmap-editor-hint {
-  color: var(--color-text-tertiary, #bbb);
+  color: var(--color-text-tertiary);
   font-size: 11px;
 }
 
@@ -373,7 +410,7 @@ defineExpose({
 
 .mindmap-editor-hint {
   margin: 0;
-  border-top: 1px solid var(--color-border, #ebebe7);
+  border-top: 1px solid var(--color-border);
   padding: 9px 14px;
 }
 
@@ -381,6 +418,7 @@ defineExpose({
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--color-bg);
 }
 
 @media (max-width: 860px) {
@@ -391,7 +429,7 @@ defineExpose({
 
   .mindmap-editor-panel {
     border-right: 0;
-    border-bottom: 1px solid var(--color-border, #ebebe7);
+    border-bottom: 1px solid var(--color-border);
   }
 }
 </style>
