@@ -2,15 +2,17 @@
 import { computed, ref, watch } from 'vue'
 import MindMapTextEditor from './MindMapTextEditor.vue'
 import MindMapViewer from './MindMapViewer.vue'
+import {
+  normalizeData,
+  toMarkdownMultiRoot,
+} from '../core'
 import type {
   LayoutDirection,
   MindMapData,
-  normalizeData,
   MindMapEvent,
   MindMapPlugin,
   ThemeMode,
   ToolbarConfig,
-  toMarkdownMultiRoot,
 } from '../core'
 
 interface Props {

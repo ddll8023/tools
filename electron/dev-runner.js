@@ -1,3 +1,4 @@
+const { existsSync } = require('fs')
 const { spawn, execSync } = require('child_process')
 const os = require('os')
 const path = require('path')
@@ -135,12 +136,17 @@ async function main() {
     }
   })
 
-  // 1. 编译 Electron 主进程
+  // 1. 编译 Electron 主进程；通过 npm 脚本使用项目内 TypeScript，避免误调用同名外部包。
   console.log('[dev-runner] 1/3 编译 Electron 主进程 ...')
-  const tscProc = spawn('npx', ['tsc', '-p', 'electron/tsconfig.json'], {
-    cwd: ROOT_DIR, shell: true, stdio: 'inherit'
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const tscProc = spawn(npmCommand, ['run', 'compile:electron'], {
+    cwd: ROOT_DIR,
+    // Windows 的 npm.cmd 需要通过 shell 启动；参数均为固定值，不拼接用户输入。
+    shell: process.platform === 'win32',
+    stdio: 'inherit'
   })
   await new Promise((resolve, reject) => {
+    tscProc.on('error', reject)
     tscProc.on('close', (code) => {
       if (code !== 0) return reject(new Error('TypeScript 编译失败'))
       resolve()
@@ -153,6 +159,9 @@ async function main() {
   const pythonBin = process.platform === 'win32'
     ? path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
     : path.join(BACKEND_DIR, '.venv', 'bin', 'python')
+  if (!existsSync(pythonBin)) {
+    throw new Error(`未找到后端 Python 环境，请先执行 uv sync --directory backend`)
+  }
   backendProc = spawn(pythonBin, [
     '-m', 'uvicorn', 'app.main:app',
     '--host', '127.0.0.1', '--port', String(BACKEND_PORT),
@@ -162,6 +171,7 @@ async function main() {
     env: {
       ...process.env,
       PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8',
       TOOLBOX_DATA_DIR,
     }
   })

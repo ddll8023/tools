@@ -1059,7 +1059,6 @@ defineExpose({
         @edit-cancel="handleEditCancel"
         @add-child="handleAddChild"
       />
-      />
     </svg>
 
     <MindMapContextMenu

@@ -20,6 +20,15 @@ export async function createAppRouter() {
           },
         },
         {
+          path: 'settings',
+          name: 'Settings',
+          component: () => import('@/views/settings/Settings.vue'),
+          meta: {
+            title: '设置',
+            sidebarDefaultCollapsed: false,
+          },
+        },
+        {
           path: 'tools',
           children: generateToolRoutes(configs),
         },

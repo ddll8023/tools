@@ -180,6 +180,7 @@ function startBackend(): Promise<void> {
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
+        PYTHONIOENCODING: 'utf-8',
         TOOLBOX_DATA_DIR: app.getPath('userData'),
       },
     })

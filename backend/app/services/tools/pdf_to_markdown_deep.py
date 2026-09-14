@@ -1,19 +1,22 @@
 """PDF 深度解析服务（MinerU CLI）"""
 
 import os
-import sys
 import uuid
 import re
 import shutil
 import threading
 import subprocess
-from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
 from fastapi import UploadFile
 
 from app.core.config import settings
+from app.services.model_manager import (
+    get_mineru_convert_command,
+    get_mineru_runtime_env,
+    require_mineru_model,
+)
 from app.utils.file import save_file, safe_filename
 from app.utils.exception import ServiceException
 from app.utils.html_table import html_tables_to_markdown
@@ -48,6 +51,9 @@ def convert_pdf_deep(file: UploadFile):
         raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "不支持的文件格式")
     if file.size > 50 * 1024 * 1024:
         raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
+
+    # 模型必须由用户在设置页显式准备，深度解析请求不再隐式下载。
+    require_mineru_model()
 
     task_id = uuid.uuid4().hex[:12]
     task_dir = os.path.join(TEMP_DIR, "tasks", task_id)
@@ -158,28 +164,9 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
         mineru_out = os.path.join(task_dir, "mineru_output")
         os.makedirs(mineru_out, exist_ok=True)
 
-        # MinerU 模型缓存目录（项目内）
-        cache_dir = settings.mineru_model_path
-        os.makedirs(cache_dir, exist_ok=True)
-        hf_cache = os.path.join(cache_dir, "huggingface")
-        modelscope_cache = os.path.join(cache_dir, "modelscope")
-        os.makedirs(hf_cache, exist_ok=True)
-        os.makedirs(modelscope_cache, exist_ok=True)
-
-        env = dict(os.environ)
-        env["HF_HOME"] = hf_cache
-        env["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-        env["MINERU_MODEL_SOURCE"] = "modelscope"
-        env["MODELSCOPE_CACHE"] = modelscope_cache
-
-        download_command, convert_command = _mineru_commands()
-
-        # 首次使用需在线下载模型：独立长超时计时，
-        # 避免下载被转换超时误杀后留下半成品缓存、重试永远失败。
-        if not _model_cache_ready(cache_dir):
-            write_status_atomic(task_dir, 8, "正在下载解析模型（仅首次使用）...")
-            if not _run_model_download(task_id, task_dir, download_command, env):
-                return
+        # 模型由设置页下载完成后才会进入深度解析；这里仅准备转换环境。
+        env = get_mineru_runtime_env()
+        convert_command = get_mineru_convert_command()
 
         write_status_atomic(task_dir, 15, "正在加载深度学习模型...")
 
@@ -238,82 +225,6 @@ def _run_mineru_convert(task_id: str, pdf_path: str, task_dir: str):
         _discard_partial_output(os.path.join(task_dir, "mineru_output"))
         write_status_atomic(task_dir, -1, "深度解析失败，请稍后重试")
         logger.error(f"深度解析异常: task_id={task_id} error={e}", exc_info=True)
-
-
-def _mineru_commands() -> tuple[list[str], list[str]]:
-    """返回（模型下载命令，PDF 转换命令）。
-
-    打包后由同一个 PyInstaller 后端进程提供 MinerU CLI，避免依赖外部 Python/venv。
-    """
-    if getattr(sys, "frozen", False):
-        return (
-            [sys.executable, "--toolbox-mineru-models"],
-            [sys.executable, "--toolbox-mineru"],
-        )
-
-    bin_dir = os.path.dirname(sys.executable)
-    suffix = ".exe" if os.name == "nt" else ""
-    return (
-        [os.path.join(bin_dir, f"mineru-models-download{suffix}")],
-        [os.path.join(bin_dir, f"mineru{suffix}")],
-    )
-
-
-def _model_cache_ready(cache_dir: str) -> bool:
-    """探测 pipeline 模型缓存是否完整：模型目录存在且无半成品下载暂存目录。
-
-    依据 ModelScope 缓存布局探测；布局变化时返回 False，
-    由幂等的下载命令兜底（缓存完整时秒级增量校验后返回）。
-    """
-    models_dir = os.path.join(
-        cache_dir, "modelscope", "models", "OpenDataLab", "PDF-Extract-Kit-1___0", "models"
-    )
-    temp_dir = os.path.join(cache_dir, "modelscope", "models", "._____temp")
-    return os.path.isdir(models_dir) and not os.path.exists(temp_dir)
-
-
-def _run_model_download(task_id: str, task_dir: str, command: list[str], env: dict) -> bool:
-    """执行模型下载命令（仅首次使用），与转换分别计时。
-
-    返回 True 表示缓存就绪；False 表示已写入失败状态，调用方应终止本次任务。
-    """
-    sink: deque = deque(maxlen=30)  # 保留末尾输出用于失败诊断
-    proc = subprocess.Popen(
-        command + ["-s", "modelscope", "-m", "pipeline"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-    )
-    readers = [
-        threading.Thread(target=_drain_stream, args=(proc.stdout, sink.append), daemon=True),
-        threading.Thread(target=_drain_stream, args=(proc.stderr, sink.append), daemon=True),
-    ]
-    for reader in readers:
-        reader.start()
-
-    timeout = settings.MINERU_MODEL_DOWNLOAD_TIMEOUT
-    try:
-        returncode = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_process(proc)
-        write_status_atomic(
-            task_dir, -1, f"模型下载超时（超过 {timeout // 60} 分钟），请检查网络后重试"
-        )
-        logger.error(f"模型下载超时: task_id={task_id} timeout={timeout}s")
-        return False
-
-    if returncode != 0:
-        write_status_atomic(task_dir, -1, "模型下载失败，请检查网络后重试")
-        logger.error(
-            f"模型下载失败: task_id={task_id} rc={returncode}\n" + "\n".join(sink)
-        )
-        return False
-
-    logger.info(f"模型下载完成: task_id={task_id}")
-    return True
 
 
 def _discard_partial_output(mineru_out: str):

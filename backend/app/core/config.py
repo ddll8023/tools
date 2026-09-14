@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     def mineru_model_path(self) -> str:
         if self.MINERU_MODEL_PATH:
             return self._resolve_path(self.MINERU_MODEL_PATH, self.data_root)
-        # MinerU 会在运行时下载模型，不能写入只读的应用包目录。
+        # MinerU 模型由设置页手动下载，不能写入只读的应用包目录。
         return os.path.join(self.data_root, "resources", "mineru")
 
     @property

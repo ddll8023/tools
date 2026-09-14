@@ -45,6 +45,19 @@ function canNavigate(tool: { available?: boolean }): boolean {
 
     <div class="mx-3 my-2 h-px bg-border"></div>
 
+    <a
+      class="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium no-underline cursor-pointer transition-all duration-150 hover:bg-hover hover:text-text"
+      :class="{ '!bg-primary-light !text-primary-dark': route.path === '/settings' }"
+      @click="navigateTo('/settings')"
+    >
+      <span class="flex-shrink-0 w-6 text-center text-[15px]">
+        <font-awesome-icon :icon="['fas', 'sliders']" />
+      </span>
+      <span>设置</span>
+    </a>
+
+    <div class="mx-3 my-2 h-px bg-border"></div>
+
     <template v-if="toolConfigs.length > 0">
       <a
         v-for="tool in toolConfigs"

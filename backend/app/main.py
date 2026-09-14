@@ -14,6 +14,7 @@ from app.api.v1.tools import pdf_to_word as router_pdf_to_word
 from app.api.v1.tools import markdown_to_word as router_markdown_to_word
 from app.api.v1.tools import qr_code as router_qr_code
 from app.api.v1.tools import id_photo as router_id_photo
+from app.api.v1 import settings as router_settings
 from app.schemas.response import ErrorCode
 from app.utils.logger_config import setup_logger
 from app.utils.exception import ServiceException
@@ -88,6 +89,7 @@ app.include_router(router_pdf_to_word.router)
 app.include_router(router_markdown_to_word.router)
 app.include_router(router_qr_code.router)
 app.include_router(router_id_photo.router)
+app.include_router(router_settings.router)
 
 
 @app.exception_handler(ServiceException)
