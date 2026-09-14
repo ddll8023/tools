@@ -79,7 +79,7 @@ export type MindMapEvent =
   | { type: 'nodeFocus'; nodeId: string }
   | { type: 'nodeCollapse'; nodeId: string }
   | { type: 'nodeExpand'; nodeId: string }
-  | { type: 'import'; source: 'markdown' | 'json'; data: MindMapData[] }
+  | { type: 'import'; source: 'markdown' | 'json' | 'xmind'; data: MindMapData[] }
   | { type: 'undo'; canUndo: boolean; canRedo: boolean }
   | { type: 'redo'; canUndo: boolean; canRedo: boolean }
   | { type: 'historyChange'; canUndo: boolean; canRedo: boolean }

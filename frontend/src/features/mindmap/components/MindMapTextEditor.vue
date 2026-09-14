@@ -176,12 +176,15 @@ function handleCompositionEnd() {
 watch(() => props.modelValue, (value) => {
   const editor = editorRef.value
   if (!editor) return
-  if (isInternalEdit.value) {
+
+  // Keep the current DOM and caret after an internal edit, but never skip a
+  // different external value that may arrive in the same update cycle.
+  if (value === lastExternalValue.value && editor.innerHTML !== '') {
     isInternalEdit.value = false
     return
   }
-  if (value === lastExternalValue.value && editor.innerHTML !== '') return
 
+  isInternalEdit.value = false
   renderText(value)
   undoStack.value = [{ text: value, caret: 0 }]
   redoStack.value = []

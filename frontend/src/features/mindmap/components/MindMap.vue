@@ -27,6 +27,8 @@ interface Props {
   plugins?: MindMapPlugin[]
 }
 
+type MindMapExportFormat = 'markdown' | 'xmind' | 'svg' | 'png'
+
 const DEFAULT_MARKDOWN = `思维导图
 - 从 Markdown 开始
   - 编写大纲
@@ -54,6 +56,9 @@ const emit = defineEmits<{
   directionChange: [direction: LayoutDirection]
   selectedNodeChange: [nodeId: string | null]
   activeTagsChange: [tags: string[]]
+  importRequest: []
+  exportRequest: [format: MindMapExportFormat]
+  reset: []
 }>()
 
 const localMarkdown = ref(
@@ -64,7 +69,7 @@ const direction = ref<LayoutDirection>(props.defaultDirection)
 const viewerRef = ref<InstanceType<typeof MindMapViewer> | null>(null)
 const editorCollapsed = ref(false)
 
-const currentMarkdown = computed(() => props.markdown ?? localMarkdown.value)
+const currentMarkdown = computed(() => localMarkdown.value)
 
 watch(() => props.markdown, (value) => {
   if (value !== undefined) localMarkdown.value = value
@@ -110,11 +115,21 @@ function handleViewerActiveTagsChange(tags: string[]) {
 function resetExample() {
   handleMarkdownChange(DEFAULT_MARKDOWN)
   handleDirectionChange(props.defaultDirection)
+  emit('reset')
 }
 
 function toggleEditor() {
   editorCollapsed.value = !editorCollapsed.value
   requestAnimationFrame(() => viewerRef.value?.fitView())
+}
+
+function handleExportSelect(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const format = select.value as MindMapExportFormat
+  select.value = ''
+  if (format === 'markdown' || format === 'xmind' || format === 'svg' || format === 'png') {
+    emit('exportRequest', format)
+  }
 }
 
 defineExpose({
@@ -126,12 +141,13 @@ defineExpose({
     viewerRef.value?.setMarkdown(value)
     emit('update:markdown', value)
   },
-  importData: (data: MindMapData | MindMapData[]) => viewerRef.value?.setData(data),
+  importData: (data: MindMapData | MindMapData[]) => viewerRef.value?.importData(data),
   importMarkdown: (value: string) => {
     localMarkdown.value = value
-    viewerRef.value?.setMarkdown(value)
+    viewerRef.value?.importMarkdown(value)
     emit('update:markdown', value)
   },
+  exportToXMind: () => viewerRef.value?.exportToXMind(),
   exportToSVG: () => viewerRef.value?.exportToSVG(),
   exportToPNG: () => viewerRef.value?.exportToPNG(),
   selectNode: (nodeId: string | null) => viewerRef.value?.selectNode(nodeId),
@@ -155,6 +171,16 @@ defineExpose({
         <h2>实时思维导图</h2>
       </div>
       <div class="mindmap-workspace-actions">
+        <button type="button" class="mindmap-workspace-button" @click="emit('importRequest')">
+          导入
+        </button>
+        <select class="mindmap-workspace-button" aria-label="导出思维导图" value="" @change="handleExportSelect">
+          <option value="" disabled>导出</option>
+          <option value="markdown">Markdown</option>
+          <option value="xmind">XMind</option>
+          <option value="svg">SVG</option>
+          <option value="png">PNG</option>
+        </select>
         <label class="mindmap-direction-control">
           <span>布局</span>
           <select :value="direction" @change="handleDirectionChange(($event.target as HTMLSelectElement).value as LayoutDirection)">
@@ -178,12 +204,14 @@ defineExpose({
           <h3>编写结构</h3>
           <span>{{ currentMarkdown.length.toLocaleString() }} 个字符</span>
         </div>
-        <MindMapTextEditor
-          :model-value="currentMarkdown"
-          class-name="mindmap-workspace-editor"
-          :readonly="readonly"
-          @update:model-value="handleMarkdownChange"
-        />
+        <div class="mindmap-editor-content">
+          <MindMapTextEditor
+            :model-value="currentMarkdown"
+            class-name="mindmap-workspace-editor"
+            :readonly="readonly"
+            @update:model-value="handleMarkdownChange"
+          />
+        </div>
         <p class="mindmap-editor-hint">两个空格表示一级子节点；修改后地图会实时更新。</p>
       </section>
 
@@ -241,6 +269,11 @@ defineExpose({
 .mindmap-workspace-title,
 .mindmap-workspace-actions {
   gap: 10px;
+}
+
+.mindmap-workspace-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .mindmap-workspace-title h2 {
@@ -327,10 +360,14 @@ defineExpose({
   font-size: 11px;
 }
 
-.mindmap-workspace-editor {
+.mindmap-editor-content {
+  position: relative;
   min-height: 0;
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.mindmap-workspace-editor {
   padding: 16px;
 }
 

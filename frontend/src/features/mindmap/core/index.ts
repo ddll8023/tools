@@ -25,6 +25,12 @@ export {
   isMindMapData,
 } from './utils/import'
 export {
+  exportMindMapToXMind,
+  parseXMindFile,
+  XMindFormatError,
+} from './utils/xmind'
+export type { XMindInput } from './utils/xmind'
+export {
   layoutMindMap,
   layoutMultiRoot,
   computeEdgePath,

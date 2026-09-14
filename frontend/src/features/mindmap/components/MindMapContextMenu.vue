@@ -28,6 +28,7 @@ const emit = defineEmits<{
   exportSVG: []
   exportPNG: []
   exportMarkdown: []
+  exportXMind: []
 }>()
 
 const menuRef = ref<HTMLElement | null>(null)
@@ -125,6 +126,9 @@ onMounted(async () => {
     </button>
     <button type="button" class="mindmap-ctx-item" role="menuitem" @click="closeAfter(() => emit('exportMarkdown'))">
       导出 Markdown
+    </button>
+    <button type="button" class="mindmap-ctx-item" role="menuitem" @click="closeAfter(() => emit('exportXMind'))">
+      导出 XMind
     </button>
   </div>
 </template>

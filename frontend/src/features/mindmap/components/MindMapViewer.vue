@@ -12,6 +12,7 @@ import {
   cloneHistorySnapshot,
   cloneMindMapData,
   buildExportSVG,
+  exportMindMapToXMind,
   exportPreparedPNG,
   generateId,
   findSubtreeMulti,
@@ -563,6 +564,14 @@ function handleExportMarkdown() {
   }
 }
 
+function handleExportXMind() {
+  try {
+    downloadBlob(exportMindMapToXMind(mapData.value), 'mindmap.xmind')
+  } catch (error) {
+    reportExportError(error)
+  }
+}
+
 function handleCreateSibling(nodeId: string) {
   if (props.readonly) return
   const node: MindMapData = { id: generateId(), text: '新节点' }
@@ -882,23 +891,42 @@ function refreshFormulaEngine() {
   void initFormulaEngine().catch(() => undefined)
 }
 
-function setData(data: MindMapData | MindMapData[]) {
+function replaceData(data: MindMapData | MindMapData[], importSource?: 'xmind') {
   mapData.value = cloneMindMapData(normalizeData(data))
   splitIndices.value = {}
   foldOverrides.value = {}
+  frontMatterTheme.value = undefined
   selectedNodeId.value = null
   editingNodeId.value = null
   editText.value = ''
   resetHistory()
   publishDataChange()
   publishMarkdown()
+  if (importSource) {
+    emit('event', {
+      type: 'import',
+      source: importSource,
+      data: cloneMindMapData(mapData.value),
+    })
+  }
 }
 
-function setMarkdown(markdown: string) {
+function setData(data: MindMapData | MindMapData[]) {
+  replaceData(data)
+}
+
+function importData(data: MindMapData | MindMapData[]) {
+  replaceData(data, 'xmind')
+}
+
+function replaceMarkdown(markdown: string, importSource?: 'markdown') {
+  const previousDirection = direction.value
   const parsed = parseInitialMindMapInput(undefined, markdown, activePlugins.value)
+  const nextDirection = parsed?.direction ?? props.defaultDirection
   mapData.value = parsed?.roots ?? [{ id: 'md-0', text: 'Root' }]
   splitIndices.value = {}
-  direction.value = parsed?.direction ?? props.defaultDirection
+  foldOverrides.value = {}
+  direction.value = nextDirection
   frontMatterTheme.value = parsed?.theme
   selectedNodeId.value = null
   editingNodeId.value = null
@@ -906,6 +934,22 @@ function setMarkdown(markdown: string) {
   resetHistory()
   publishDataChange()
   emit('markdownChange', markdown)
+  if (previousDirection !== nextDirection) emit('directionChange', nextDirection)
+  if (importSource) {
+    emit('event', {
+      type: 'import',
+      source: importSource,
+      data: cloneMindMapData(mapData.value),
+    })
+  }
+}
+
+function setMarkdown(markdown: string) {
+  replaceMarkdown(markdown)
+}
+
+function importMarkdown(markdown: string) {
+  replaceMarkdown(markdown, 'markdown')
 }
 
 function selectNode(nodeId: string | null) {
@@ -995,6 +1039,9 @@ defineExpose({
   getMarkdown: () => toMarkdownMultiRoot(mapData.value, activePlugins.value),
   setData,
   setMarkdown,
+  importData,
+  importMarkdown,
+  exportToXMind: () => exportMindMapToXMind(mapData.value),
   exportToSVG: exportCurrentSVG,
   exportToPNG: exportCurrentPNG,
   selectNode,
@@ -1080,6 +1127,7 @@ defineExpose({
       @export-svg="handleExportSVG"
       @export-png="handleExportPNG"
       @export-markdown="handleExportMarkdown"
+      @export-xmind="handleExportXMind"
     />
 
     <div v-if="exportError" class="mindmap-export-error" role="alert">

@@ -22,6 +22,7 @@ export interface MindMapMessages {
   exportSVG: string
   exportPNG: string
   exportMarkdown: string
+  exportXMind: string
   layout: string
 
   // Node context menu
@@ -36,6 +37,7 @@ export interface MindMapMessages {
   import: string
   importAuto: string
   importMarkdown: string
+  importXMind: string
   importJSON: string
   importPlaceholder: string
   importConfirm: string
@@ -82,6 +84,7 @@ const zhCN: MindMapMessages = {
   exportSVG: '导出为 SVG',
   exportPNG: '导出为 PNG',
   exportMarkdown: '导出为 Markdown',
+  exportXMind: '导出为 XMind',
   layout: '布局',
 
   addChild: '添加子节点',
@@ -94,6 +97,7 @@ const zhCN: MindMapMessages = {
   import: '导入',
   importAuto: '自动',
   importMarkdown: 'Markdown',
+  importXMind: 'XMind',
   importJSON: 'JSON',
   importPlaceholder: '粘贴 Markdown 大纲或 MindMapData JSON...',
   importConfirm: '导入',
@@ -137,6 +141,7 @@ const enUS: MindMapMessages = {
   exportSVG: 'Export as SVG',
   exportPNG: 'Export as PNG',
   exportMarkdown: 'Export as Markdown',
+  exportXMind: 'Export as XMind',
   layout: 'Layout',
 
   addChild: 'Add Child',
@@ -149,6 +154,7 @@ const enUS: MindMapMessages = {
   import: 'Import',
   importAuto: 'Auto',
   importMarkdown: 'Markdown',
+  importXMind: 'XMind',
   importJSON: 'JSON',
   importPlaceholder: 'Paste a Markdown outline or MindMapData JSON...',
   importConfirm: 'Import',

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { MindMap } from '@/features/mindmap/components'
+import { parseXMindFile } from '@/features/mindmap/core'
 
-const MAX_MARKDOWN_SIZE = 10 * 1024 * 1024
+type MindMapExportFormat = 'markdown' | 'xmind' | 'svg' | 'png'
+
+const MAX_IMPORT_SIZE = 10 * 1024 * 1024
 const DEFAULT_MARKDOWN = `思维导图
 - 从 Markdown 开始
   - 编写大纲
@@ -15,23 +18,41 @@ const DEFAULT_MARKDOWN = `思维导图
   - PNG 支持本地下载`
 
 const markdown = ref(DEFAULT_MARKDOWN)
-const fileName = ref('示例思维导图')
 const errorMessage = ref('')
+const fileName = ref('示例思维导图')
 const fileInput = ref<HTMLInputElement | null>(null)
-
-function openFilePicker() {
-  fileInput.value?.click()
-}
+const mindMapRef = ref<InstanceType<typeof MindMap> | null>(null)
+const exportingFormat = ref<MindMapExportFormat | null>(null)
 
 function validateFile(file: File): string | null {
   const filename = file.name.toLowerCase()
-  if (!filename.endsWith('.md') && !filename.endsWith('.markdown')) {
-    return '仅支持 .md 或 .markdown 文件。'
+  if (!filename.endsWith('.md') && !filename.endsWith('.markdown') && !filename.endsWith('.xmind')) {
+    return '仅支持 .md、.markdown 或 .xmind 文件。'
   }
-  if (file.size > MAX_MARKDOWN_SIZE) {
-    return 'Markdown 文件不能超过 10MB。'
+  if (file.size > MAX_IMPORT_SIZE) {
+    return '思维导图文件不能超过 10MB。'
   }
   return null
+}
+
+function getImportSource(file: File): 'markdown' | 'xmind' {
+  return file.name.toLowerCase().endsWith('.xmind') ? 'xmind' : 'markdown'
+}
+
+function importMarkdown(text: string): boolean {
+  if (!text.trim()) {
+    errorMessage.value = 'Markdown 文件不能为空。'
+    return false
+  }
+
+  const mindMap = mindMapRef.value
+  if (!mindMap) {
+    errorMessage.value = '思维导图尚未准备好，请稍后重试。'
+    return false
+  }
+
+  mindMap.importMarkdown(text)
+  return true
 }
 
 async function openFile(file: File) {
@@ -42,17 +63,28 @@ async function openFile(file: File) {
   }
 
   try {
-    const text = await file.text()
-    if (!text.trim()) {
-      errorMessage.value = 'Markdown 文件不能为空。'
-      return
+    const source = getImportSource(file)
+    if (source === 'xmind') {
+      const mindMap = mindMapRef.value
+      if (!mindMap) {
+        errorMessage.value = '思维导图尚未准备好，请稍后重试。'
+        return
+      }
+      mindMap.importData(await parseXMindFile(await file.arrayBuffer()))
+    } else {
+      if (!importMarkdown(await file.text())) return
     }
-    markdown.value = text
-    fileName.value = file.name.replace(/\.(markdown?|md)$/i, '') || '思维导图'
+    fileName.value = file.name.replace(/\.(?:md|markdown|xmind)$/i, '') || '思维导图'
     errorMessage.value = ''
-  } catch {
-    errorMessage.value = '文件读取失败，请重新选择。'
+  } catch (error) {
+    errorMessage.value = error instanceof Error && error.message
+      ? error.message
+      : '文件读取失败，请重新选择。'
   }
+}
+
+function openFilePicker() {
+  fileInput.value?.click()
 }
 
 function handleFileChange(event: Event) {
@@ -67,10 +99,63 @@ function handleDrop(event: DragEvent) {
   if (file) void openFile(file)
 }
 
-function resetExample() {
-  markdown.value = DEFAULT_MARKDOWN
+function handleReset() {
   fileName.value = '示例思维导图'
   errorMessage.value = ''
+}
+
+function getExportBaseName(): string {
+  return fileName.value.replace(/[\\/:*?"<>|]/g, '_').trim() || '思维导图'
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+async function handleExport(format: MindMapExportFormat) {
+  const mindMap = mindMapRef.value
+  if (!mindMap || exportingFormat.value) return
+
+  exportingFormat.value = format
+  errorMessage.value = ''
+  const baseName = getExportBaseName()
+
+  try {
+    if (format === 'markdown') {
+      downloadBlob(
+        new Blob([mindMap.getMarkdown()], { type: 'text/markdown;charset=utf-8' }),
+        `${baseName}.md`,
+      )
+    } else if (format === 'xmind') {
+      const xmind = await mindMap.exportToXMind()
+      if (!xmind) throw new Error('XMind 导出不可用。')
+      downloadBlob(xmind, `${baseName}.xmind`)
+    } else if (format === 'svg') {
+      const svg = await mindMap.exportToSVG()
+      if (!svg) throw new Error('SVG 导出不可用。')
+      downloadBlob(
+        new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }),
+        `${baseName}.svg`,
+      )
+    } else {
+      const png = await mindMap.exportToPNG()
+      if (!png) throw new Error('PNG 导出不可用。')
+      downloadBlob(png, `${baseName}.png`)
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error && error.message
+      ? error.message
+      : '导出失败，请稍后重试。'
+  } finally {
+    exportingFormat.value = null
+  }
 }
 </script>
 
@@ -80,43 +165,27 @@ function resetExample() {
     @dragover.prevent
     @drop.prevent="handleDrop"
   >
-    <header class="flex min-h-14 shrink-0 items-center justify-between gap-4 border-b border-[#e8e8e3] bg-white px-4 py-2">
-      <div class="min-w-0">
-        <h1 class="truncate text-sm font-semibold text-[#2f2f2f]">{{ fileName }}</h1>
-        <p class="text-xs text-[#999]">Markdown 在本地解析，内容不会上传。</p>
-      </div>
-      <div class="flex shrink-0 items-center gap-2">
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".md,.markdown,text/markdown"
-          class="hidden"
-          @change="handleFileChange"
-        />
-        <button
-          type="button"
-          class="rounded-md border border-[#deded8] bg-white px-3 py-1.5 text-xs text-[#555] transition hover:border-[#d99a2b] hover:text-[#b4770d]"
-          @click="openFilePicker"
-        >
-          打开 Markdown
-        </button>
-        <button
-          type="button"
-          class="rounded-md border border-[#deded8] bg-white px-3 py-1.5 text-xs text-[#555] transition hover:border-[#d99a2b] hover:text-[#b4770d]"
-          @click="resetExample"
-        >
-          重置示例
-        </button>
-      </div>
-    </header>
-
     <div v-if="errorMessage" class="flex shrink-0 items-center justify-between gap-3 border-b border-[#f1c4c4] bg-[#fff4f4] px-4 py-2 text-xs text-[#b42318]" role="alert">
       <span>{{ errorMessage }}</span>
       <button type="button" class="shrink-0 underline" @click="errorMessage = ''">关闭</button>
     </div>
 
+    <input
+      ref="fileInput"
+      type="file"
+      accept=".md,.markdown,.xmind,text/markdown,application/xmind,application/zip"
+      class="hidden"
+      @change="handleFileChange"
+    />
+
     <div class="min-h-0 flex-1 overflow-hidden">
-      <MindMap v-model:markdown="markdown" />
+      <MindMap
+        ref="mindMapRef"
+        v-model:markdown="markdown"
+        @import-request="openFilePicker"
+        @export-request="handleExport"
+        @reset="handleReset"
+      />
     </div>
   </main>
 </template>
