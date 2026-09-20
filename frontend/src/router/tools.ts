@@ -1,3 +1,4 @@
+/** 合并后端工具目录与本地页面、桌面能力，生成导航及工具路由。 */
 import { ref } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
 import type { ToolConfig } from '@/types/tool'
@@ -18,6 +19,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
   'markdown-to-word': {
     icon: ['fas', 'file-word'],
     component: () => import('@/views/tools/MarkdownToWord.vue'),
+  },
+  'markdown-to-pdf': {
+    icon: ['fas', 'file-pdf'],
+    component: () => import('@/views/tools/MarkdownToPdf.vue'),
   },
   mindmap: {
     icon: ['fas', 'diagram-project'],

@@ -4,12 +4,12 @@ import os
 import re
 import json
 import uuid
-import subprocess
+from pathlib import Path
 
 from fastapi import UploadFile
 
-from app.core.config import settings
 from app.utils.file import save_file, safe_filename
+from app.utils.libreoffice import convert_to_pdf
 from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
 from app.utils.exception import ServiceException
 from app.schemas.response import ErrorCode
@@ -18,34 +18,9 @@ from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-LIBREOFFICE_PATH = settings.libreoffice_path
-CONVERT_TIMEOUT = 120
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 SUPPORTED_EXTENSIONS = (".docx", ".doc")
-
-# Windows 下隐藏 LibreOffice 启动时弹出的终端窗口
-_POPEN_KWARGS = {}
-if os.name == "nt":
-    _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-
-def _kill_process_tree(proc: subprocess.Popen):
-    """超时后终止 LibreOffice 进程（Windows 下连子进程一起终止）。"""
-    try:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-            )
-        else:
-            proc.kill()
-    except Exception:
-        pass
-    try:
-        proc.wait(timeout=5)
-    except Exception:
-        pass
 
 
 def convert_word(file: UploadFile) -> ConvertResponse:
@@ -75,40 +50,12 @@ def convert_word(file: UploadFile) -> ConvertResponse:
     output_pdf = os.path.join(task_dir, "output.pdf")
 
     logger.info(f"开始 Word 转 PDF: task_id={task_id} filename={safe_name}")
-
-    try:
-        proc = subprocess.Popen(
-            [
-                LIBREOFFICE_PATH,
-                "--headless",
-                "--norestore",
-                "--convert-to", "pdf",
-                "--outdir", task_dir,
-                input_path,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            **_POPEN_KWARGS,
-        )
-        try:
-            _stdout, stderr = proc.communicate(timeout=CONVERT_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            _kill_process_tree(proc)
-            raise ServiceException(
-                ErrorCode.TIMEOUT,
-                "转换超时，文档可能过大或格式复杂",
-            )
-        if proc.returncode != 0:
-            err = stderr.decode(errors="replace") if stderr else "未知错误"
-            raise ServiceException(
-                ErrorCode.CONVERSION_FAILED,
-                f"转换失败: {err}",
-            )
-    except FileNotFoundError:
-        raise ServiceException(
-            ErrorCode.SERVICE_UNAVAILABLE,
-            "未检测到 LibreOffice，请先安装",
-        )
+    convert_to_pdf(
+        Path(input_path),
+        Path(output_pdf),
+        Path(task_dir),
+        timeout=120,
+    )
 
     if not os.path.exists(output_pdf):
         raise ServiceException(

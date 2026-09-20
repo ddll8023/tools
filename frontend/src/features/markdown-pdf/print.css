@@ -1,0 +1,51 @@
+/* 内容预览与 PDF 共用的离线打印样式，不依赖应用主题或网络字体。 */
+* { box-sizing: border-box; }
+html { color-scheme: light; }
+body {
+  margin: 0;
+  color: #242424;
+  background: white;
+  /* 优先选择明确的中日韩字体，避免 Chromium 打印时将中文回退成空的 Type3 字形。 */
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei", sans-serif;
+  font-size: var(--document-font-size, 11pt);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.document { width: 100%; }
+h1, h2, h3, h4, h5, h6 { line-height: 1.35; margin: 1.2em 0 .6em; break-after: avoid; }
+h1 { font-size: 2em; }
+h2 { font-size: 1.55em; padding-bottom: .25em; border-bottom: 1px solid #ddd; }
+h3 { font-size: 1.25em; }
+p, ul, ol, blockquote, pre, table { margin: .8em 0; }
+p, li { orphans: 3; widows: 3; }
+ul, ol { padding-left: 1.8em; }
+blockquote { border-left: 3px solid #b8b8b8; padding: .1em 1em; color: #555; }
+a { color: #185aa5; text-decoration: underline; overflow-wrap: anywhere; }
+img { max-width: 100%; height: auto; max-height: var(--document-image-height, 235mm); object-fit: contain; }
+pre, code { font-family: "SFMono-Regular", Menlo, Consolas, "Microsoft YaHei Mono", "Noto Sans Mono CJK SC", monospace; font-size: .88em; }
+code { background: #f3f4f5; padding: .1em .25em; border-radius: 3px; }
+pre { padding: .9em; border: 1px solid #e1e3e5; background: #f6f8fa; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre code { font-size: inherit; padding: 0; background: transparent; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .92em; }
+th, td { border: 1px solid #d8d8d8; padding: .4em .6em; overflow-wrap: anywhere; vertical-align: top; }
+th { background: #f3f4f5; font-weight: 600; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; }
+hr { border: 0; border-top: 1px solid #ddd; margin: 1.5em 0; }
+.math-inline svg { display: inline-block; max-width: 100%; }
+.math-block { text-align: center; margin: 1em 0; break-inside: avoid; }
+.math-block svg { max-width: 100%; height: auto; max-height: var(--document-image-height, 235mm); }
+.math-error, .missing-image { color: #9e3b17; background: #fff3e8; white-space: pre-wrap; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #a626a4; }
+.hljs-string, .hljs-regexp, .hljs-addition { color: #397300; }
+.hljs-comment, .hljs-quote { color: #697078; font-style: italic; }
+.hljs-number, .hljs-built_in, .hljs-type { color: #986801; }
+.hljs-title, .hljs-section, .hljs-attribute { color: #005cc5; }
+@media screen {
+  body { padding: var(--document-margin, 18mm); }
+}
+@media print {
+  body { padding: 0; }
+}

@@ -1,3 +1,4 @@
+/** 向应用页面暴露受限桌面 API，不公开通用 IPC 或磁盘写入能力。 */
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateCommandResult, UpdateStatus } from './update-types'
 
@@ -35,7 +36,7 @@ function recordPaths(files: ArrayLike<RendererFile> | null | undefined): void {
       // 页内构造或已失去磁盘来源的 File 直接忽略，由上层回退到上传流程
     }
   }
-  if (paths.length > 0) pendingPaths = paths
+  pendingPaths = paths
 }
 
 window.addEventListener('drop', (event) => recordPaths(event.dataTransfer?.files), true)

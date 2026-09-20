@@ -1,3 +1,4 @@
+/** 桌面主进程：管理应用窗口、后端生命周期和受限桌面能力。 */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { existsSync, statSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
@@ -10,9 +11,13 @@ import {
 } from './updater'
 
 const APP_DATA_DIR_NAME = '工具盒子'
+const INTERNAL_APP_NAME = 'toolbox-desktop'
+const SAFE_USER_AGENT = `Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 Electron/${process.versions.electron}`
 const UNIFIED_USER_DATA_DIR = path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
 
-app.setName(APP_DATA_DIR_NAME)
+// Electron 可能把应用名拼入 User-Agent；内部标识必须保持 ASCII，中文仅用于界面和数据目录。
+app.setName(INTERNAL_APP_NAME)
+app.userAgentFallback = SAFE_USER_AGENT
 app.setPath('userData', UNIFIED_USER_DATA_DIR)
 
 const isDev = !app.isPackaged

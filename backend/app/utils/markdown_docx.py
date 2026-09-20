@@ -13,11 +13,13 @@ from urllib.parse import unquote, urlsplit
 
 from docx import Document
 from docx.document import Document as DocumentType
+from docx.enum.section import WD_ORIENT
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Inches, Mm, Pt, RGBColor
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
@@ -26,6 +28,16 @@ from app.utils.html_table import html_tables_to_markdown
 
 _MAX_DATA_URI_SIZE = 10 * 1024 * 1024
 _MAX_IMAGE_WIDTH_INCHES = 6.0
+
+
+@dataclass(frozen=True)
+class DocumentRenderOptions:
+    """可选的 PDF 文档页面设置；未传入时保持 Markdown 转 Word 的原有排版。"""
+
+    landscape: bool = False
+    margin_mm: int = 18
+    font_size: int = 11
+    page_numbers: bool = True
 
 
 @dataclass(frozen=True)
@@ -50,9 +62,15 @@ class _InlineStyle:
 class MarkdownDocxRenderer:
     """将 Markdown Token 渲染到 python-docx 文档。"""
 
-    def __init__(self, document: DocumentType, base_dir: Path):
+    def __init__(
+        self,
+        document: DocumentType,
+        base_dir: Path,
+        options: DocumentRenderOptions | None = None,
+    ):
         self.document = document
         self.base_dir = base_dir.resolve()
+        self.options = options
         self.warnings: list[str] = []
         self._warning_set: set[str] = set()
         self._configure_document()
@@ -64,14 +82,25 @@ class MarkdownDocxRenderer:
     def _configure_document(self) -> None:
         """设置文档页边距和常用样式。"""
         for section in self.document.sections:
-            section.top_margin = Inches(0.75)
-            section.bottom_margin = Inches(0.75)
-            section.left_margin = Inches(0.8)
-            section.right_margin = Inches(0.8)
+            if self.options is None:
+                section.top_margin = Inches(0.75)
+                section.bottom_margin = Inches(0.75)
+                section.left_margin = Inches(0.8)
+                section.right_margin = Inches(0.8)
+            else:
+                section.orientation = WD_ORIENT.LANDSCAPE if self.options.landscape else WD_ORIENT.PORTRAIT
+                section.page_width = Mm(297 if self.options.landscape else 210)
+                section.page_height = Mm(210 if self.options.landscape else 297)
+                section.top_margin = Mm(self.options.margin_mm)
+                section.bottom_margin = Mm(self.options.margin_mm)
+                section.left_margin = Mm(self.options.margin_mm)
+                section.right_margin = Mm(self.options.margin_mm)
+                if self.options.page_numbers:
+                    self._add_page_number_footer(section)
 
         normal = self.document.styles["Normal"]
         normal.font.name = "Aptos"
-        normal.font.size = Pt(11)
+        normal.font.size = Pt(self.options.font_size if self.options else 11)
 
         for level in range(1, 7):
             style = self.document.styles[f"Heading {level}"]
@@ -86,6 +115,27 @@ class MarkdownDocxRenderer:
             code_style.paragraph_format.right_indent = Inches(0.25)
             code_style.paragraph_format.space_before = Pt(4)
             code_style.paragraph_format.space_after = Pt(4)
+
+    @staticmethod
+    def _add_page_number_footer(section) -> None:
+        """在 PDF 版式中添加 LibreOffice 可识别的页码域。"""
+        footer = section.footer
+        paragraph = footer.paragraphs[0]
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = paragraph.add_run()
+        for field in ("PAGE", "NUMPAGES"):
+            if field == "NUMPAGES":
+                run.add_text(" / ")
+            begin = OxmlElement("w:fldChar")
+            begin.set(qn("w:fldCharType"), "begin")
+            instruction = OxmlElement("w:instrText")
+            instruction.set(qn("xml:space"), "preserve")
+            instruction.text = field
+            separate = OxmlElement("w:fldChar")
+            separate.set(qn("w:fldCharType"), "separate")
+            end = OxmlElement("w:fldChar")
+            end.set(qn("w:fldCharType"), "end")
+            run._r.extend((begin, instruction, separate, end))
 
     def _render_blocks(
         self,
@@ -514,6 +564,7 @@ def render_markdown_to_docx(
     markdown_content: str,
     base_dir: Path,
     output_path: Path,
+    options: DocumentRenderOptions | None = None,
 ) -> list[str]:
     """将 Markdown 文本渲染为 DOCX，并返回非致命转换警告。
 
@@ -526,7 +577,7 @@ def render_markdown_to_docx(
     tokens = parser.parse(markdown_content)
 
     document = Document()
-    renderer = MarkdownDocxRenderer(document, base_dir)
+    renderer = MarkdownDocxRenderer(document, base_dir, options)
     warnings = renderer.render(tokens)
     document.save(str(output_path))
     return warnings

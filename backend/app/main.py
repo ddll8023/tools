@@ -1,3 +1,5 @@
+"""创建本地工具 API 应用，统一注册路由、生命周期及异常处理。"""
+
 import os
 import subprocess
 from contextlib import asynccontextmanager
@@ -12,6 +14,7 @@ from app.api.v1.tools import image_converter as router_image_converter
 from app.api.v1.tools import epub_to_markdown as router_epub_to_markdown
 from app.api.v1.tools import pdf_to_word as router_pdf_to_word
 from app.api.v1.tools import markdown_to_word as router_markdown_to_word
+from app.api.v1.tools import markdown_to_pdf as router_markdown_to_pdf
 from app.api.v1.tools import qr_code as router_qr_code
 from app.api.v1.tools import id_photo as router_id_photo
 from app.api.v1 import settings as router_settings
@@ -87,6 +90,7 @@ app.include_router(router_image_converter.router)
 app.include_router(router_epub_to_markdown.router)
 app.include_router(router_pdf_to_word.router)
 app.include_router(router_markdown_to_word.router)
+app.include_router(router_markdown_to_pdf.router)
 app.include_router(router_qr_code.router)
 app.include_router(router_id_photo.router)
 app.include_router(router_settings.router)

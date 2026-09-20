@@ -4,6 +4,8 @@
  */
 
 import type { ApiResponse } from '@/types/tool'
+import type { MarkdownSource } from '@/features/markdown/source'
+import type { PdfOptions } from '@/features/markdown-pdf/types'
 
 const API_BASE = 'http://127.0.0.1:4740'
 
@@ -291,8 +293,64 @@ export async function downloadWord(taskId: string): Promise<void> {
 }
 
 /* ════════════════════════════════════════
-   Markdown 转 Word API
+   Markdown 转 PDF / Word API
    ════════════════════════════════════════ */
+
+/** 复用后端 Word 排版链路生成 PDF；取消只影响当前前端请求。 */
+export interface MarkdownToPdfConvertResponse {
+  task_id: string
+  filename: string
+  output_filename: string
+  warnings: string[]
+}
+
+export async function convertMarkdownToPdf(
+  source: MarkdownSource,
+  options: PdfOptions,
+  signal?: AbortSignal,
+): Promise<MarkdownToPdfConvertResponse> {
+  const form = new FormData()
+  if (source.kind === 'local') form.append('source_path', source.path)
+  else form.append('file', source.file)
+  form.append('landscape', String(options.landscape))
+  form.append('margin_mm', String(options.marginMm))
+  form.append('font_size', String(options.fontSize))
+  form.append('page_numbers', String(options.pageNumbers))
+  const response = await fetch(`${API_BASE}/api/v1/tools/markdown-to-pdf/convert`, {
+    method: 'POST', body: form, signal,
+  })
+  if (!response.ok) throw new Error(`转换失败（HTTP ${response.status}）`)
+  const json: ApiResponse<MarkdownToPdfConvertResponse> = await response.json()
+  if (json.code !== 0 || !json.data) throw new Error(json.message || '转换失败')
+  return json.data
+}
+
+export async function downloadMarkdownToPdf(taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-pdf/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId }),
+  })
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || contentType.includes('application/json')) {
+    if (contentType.includes('application/json')) {
+      const json: ApiResponse<null> = await res.json()
+      throw new Error(json.message || '下载失败')
+    }
+    throw new Error(`下载失败（HTTP ${res.status}）`)
+  }
+  const disposition = res.headers.get('content-disposition')
+  const filename = parseContentDispositionFilename(disposition, `${taskId}.pdf`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
 
 export async function convertMarkdownToWord(
   file: File,

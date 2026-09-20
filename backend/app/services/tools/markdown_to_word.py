@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 import subprocess
 import uuid
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -19,18 +17,19 @@ from app.core.config import settings
 from app.schemas.response import ErrorCode
 from app.schemas.tools.markdown_to_word import ConvertResponse
 from app.utils.exception import ServiceException
-from app.utils.file import safe_filename, save_file
+from app.utils.file import safe_filename
 from app.utils.logger_config import setup_logger
 from app.utils.markdown_docx import render_markdown_to_docx
+from app.utils.markdown_source import (
+    MarkdownInputError,
+    MarkdownSource,
+    prepare_markdown_source,
+    read_markdown,
+)
 from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
 
 logger = setup_logger(__name__)
 
-MAX_FILE_SIZE = 50 * 1024 * 1024
-MAX_ARCHIVE_MEMBERS = 512
-MAX_ARCHIVE_UNPACKED_SIZE = 200 * 1024 * 1024
-SUPPORTED_MARKDOWN_EXTENSIONS = (".md", ".markdown")
-SUPPORTED_INPUT_EXTENSIONS = SUPPORTED_MARKDOWN_EXTENSIONS + (".zip",)
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DOC_MEDIA_TYPE = "application/msword"
 OutputFormat = Literal["docx", "doc"]
@@ -46,23 +45,6 @@ _UPLOAD_IMAGE_HINT = (
 _POPEN_KWARGS: dict[str, int] = {}
 if os.name == "nt":
     _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-
-@dataclass(frozen=True)
-class _SourceBundle:
-    """解包后的 Markdown 来源。"""
-
-    markdown_path: Path
-    base_dir: Path
-    from_local: bool = False
-
-
-class _InputError(Exception):
-    """内部输入文件错误。"""
-
-
-class _ArchiveLimitError(_InputError):
-    """压缩包超过安全限制。"""
 
 
 def convert_markdown_to_word(
@@ -81,8 +63,8 @@ def convert_markdown_to_word(
     task_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        source, filename = _prepare_source(file, source_path, task_dir)
-        markdown_content = _read_markdown(source.markdown_path)
+        source, filename = prepare_markdown_source(file, source_path, task_dir)
+        markdown_content = read_markdown(source.markdown_path)
         output_stem = safe_filename(source.markdown_path.stem, "document")
         output_filename = f"{output_stem}.{selected_format}"
         docx_path = task_dir / "output.docx"
@@ -131,7 +113,7 @@ def convert_markdown_to_word(
     except ServiceException:
         shutil.rmtree(task_dir, ignore_errors=True)
         raise
-    except _InputError as exc:
+    except MarkdownInputError as exc:
         shutil.rmtree(task_dir, ignore_errors=True)
         raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, str(exc)) from exc
     except UnicodeDecodeError as exc:
@@ -176,169 +158,13 @@ def download_word(task_id: str) -> tuple[str, str, str]:
     return str(output_path), output_filename, media_type
 
 
-def _missing_image_hints(source: _SourceBundle, warnings: list[str]) -> list[str]:
+def _missing_image_hints(source: MarkdownSource, warnings: list[str]) -> list[str]:
     """Markdown 引用的图片全部缺失时，补充可恢复操作的提示。"""
     if source.from_local:
         return []
     if not any("图片文件不存在" in warning for warning in warnings):
         return []
     return [_UPLOAD_IMAGE_HINT]
-
-
-def _read_upload(file: UploadFile) -> bytes:
-    try:
-        content = file.file.read(MAX_FILE_SIZE + 1)
-    except OSError as exc:
-        raise ServiceException(ErrorCode.CONVERSION_FAILED, "读取 Markdown 文件失败") from exc
-
-    if len(content) > MAX_FILE_SIZE:
-        raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
-    if not content:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "文件不能为空")
-    return content
-
-
-def _prepare_source(
-    file: UploadFile | None,
-    source_path: str | None,
-    task_dir: Path,
-) -> tuple[_SourceBundle, str]:
-    """按本地路径或上传内容准备 Markdown 来源，返回来源与原始文件名。"""
-    local_path = (source_path or "").strip()
-    if local_path:
-        return _prepare_local_source(local_path)
-
-    if file is None:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "请上传 Markdown 文件或提供本地 Markdown 路径")
-
-    filename = safe_filename(file.filename, "document.md")
-    extension = Path(filename).suffix.lower()
-    if extension not in SUPPORTED_INPUT_EXTENSIONS:
-        raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "仅支持 .md、.markdown 或 .zip 文件")
-
-    content = _read_upload(file)
-    return _prepare_uploaded_source(task_dir, filename, content, extension), filename
-
-
-def _prepare_local_source(raw_path: str) -> tuple[_SourceBundle, str]:
-    """校验本地 Markdown 路径，并以所在目录作为图片基准目录。"""
-    path = Path(raw_path).expanduser()
-    if path.suffix.lower() not in SUPPORTED_MARKDOWN_EXTENSIONS:
-        raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "本地文件必须是 .md 或 .markdown")
-
-    try:
-        is_file = path.is_file()
-        size = path.stat().st_size if is_file else 0
-    except OSError as exc:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 Markdown 文件不存在或无法读取") from exc
-
-    if not is_file:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 Markdown 文件不存在或无法读取")
-    if size == 0:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "文件不能为空")
-    if size > MAX_FILE_SIZE:
-        raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
-
-    markdown_path = path.resolve()
-    filename = safe_filename(markdown_path.name, "document.md")
-    return (
-        _SourceBundle(
-            markdown_path=markdown_path,
-            base_dir=markdown_path.parent,
-            from_local=True,
-        ),
-        filename,
-    )
-
-
-def _prepare_uploaded_source(
-    task_dir: Path,
-    filename: str,
-    content: bytes,
-    extension: str,
-) -> _SourceBundle:
-    source_dir = task_dir / "source"
-    source_dir.mkdir(parents=True, exist_ok=True)
-
-    if extension in SUPPORTED_MARKDOWN_EXTENSIONS:
-        markdown_path = source_dir / safe_filename(filename, "document.md")
-        save_file(content, str(markdown_path))
-        return _SourceBundle(markdown_path=markdown_path, base_dir=source_dir)
-
-    archive_path = task_dir / "input.zip"
-    save_file(content, str(archive_path))
-    _extract_archive(archive_path, source_dir)
-
-    markdown_files = [
-        path
-        for path in source_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_MARKDOWN_EXTENSIONS
-    ]
-    if not markdown_files:
-        raise _InputError("ZIP 中未找到 .md 或 .markdown 文件")
-    if len(markdown_files) > 1:
-        raise _InputError("ZIP 中只能包含一个 .md 或 .markdown 文件")
-
-    markdown_path = markdown_files[0]
-    return _SourceBundle(markdown_path=markdown_path, base_dir=markdown_path.parent)
-
-
-def _extract_archive(archive_path: Path, target_dir: Path) -> None:
-    try:
-        with zipfile.ZipFile(archive_path) as archive:
-            members = archive.infolist()
-            if len(members) > MAX_ARCHIVE_MEMBERS:
-                raise _ArchiveLimitError("ZIP 文件包含的条目不能超过 512 个")
-
-            unpacked_size = 0
-            for member in members:
-                _validate_archive_member(member, target_dir)
-                unpacked_size += member.file_size
-                if unpacked_size > MAX_ARCHIVE_UNPACKED_SIZE:
-                    raise _ArchiveLimitError("ZIP 解压后的内容不能超过 200MB")
-
-            for member in members:
-                if member.is_dir():
-                    continue
-                destination = _archive_destination(member, target_dir)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(member) as source, destination.open("wb") as target:
-                    shutil.copyfileobj(source, target, length=1024 * 1024)
-    except _InputError:
-        raise
-    except (OSError, zipfile.BadZipFile) as exc:
-        raise _InputError("ZIP 文件损坏或无法读取") from exc
-
-
-def _validate_archive_member(member: zipfile.ZipInfo, target_dir: Path) -> None:
-    name = member.filename.replace("\\", "/")
-    if not name or name.startswith("/"):
-        raise _InputError("ZIP 包含非法路径")
-
-    mode = (member.external_attr >> 16) & 0xFFFF
-    if stat.S_ISLNK(mode):
-        raise _InputError("ZIP 不支持符号链接")
-
-    destination = _archive_destination(member, target_dir)
-    target_root = target_dir.resolve()
-    if not destination.parent.resolve().is_relative_to(target_root):
-        raise _InputError("ZIP 包含路径穿越内容")
-
-
-def _archive_destination(member: zipfile.ZipInfo, target_dir: Path) -> Path:
-    parts = [part for part in member.filename.replace("\\", "/").split("/") if part not in {"", "."}]
-    if not parts or ".." in parts:
-        raise _InputError("ZIP 包含非法路径")
-    return target_dir.joinpath(*parts)
-
-
-def _read_markdown(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        raise
-    except OSError as exc:
-        raise ServiceException(ErrorCode.CONVERSION_FAILED, "读取 Markdown 内容失败") from exc
 
 
 def _convert_docx_to_doc(docx_path: Path, output_path: Path, task_dir: Path) -> None:

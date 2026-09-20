@@ -108,6 +108,18 @@ def get_tool_list():
     )
     result.append(id_photo_tool)
 
+    markdown_pdf_tool = ToolListItem(
+        id="markdown-to-pdf",
+        name="MarkdownToPdf",
+        path="markdown-to-pdf",
+        display_name="Markdown 转 PDF",
+        description="将 Markdown 按 Word 排版链路转换为 PDF，支持图片和中文内容",
+        icon="fas fa-file-pdf",
+        available=_libreoffice_available,
+        unavailable_reason=None if _libreoffice_available else _libreoffice_unavailable_reason,
+    )
+    result.append(markdown_pdf_tool)
+
     word_tool = ToolListItem(
         id="word-to-pdf",
         name="WordToPdf",

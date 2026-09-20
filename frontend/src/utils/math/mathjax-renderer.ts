@@ -1,3 +1,4 @@
+/** 使用本地 MathJax 将公式转换成不含外部资源的独立 SVG 路径。 */
 import { mathjax } from '@mathjax/src/mjs/mathjax.js'
 import { TeX } from '@mathjax/src/mjs/input/tex.js'
 import { SVG } from '@mathjax/src/mjs/output/svg.js'
@@ -13,8 +14,7 @@ const adaptor = liteAdaptor()
 RegisterHTMLHandler(adaptor)
 const createDocument = () => mathjax.document('', {
   InputJax: new TeX({
-    // Deliberately exclude require/autoload/html: user formulas cannot fetch resources
-    // or inject links/HTML. Each conversion gets its own macro definitions.
+    // 不启用 require/autoload/html，阻止用户公式联网或注入 HTML；宏定义按次隔离。
     packages: ['base', 'ams', 'newcommand', 'boldsymbol'],
     maxBuffer: 16 * 1024,
     formatError: (_jax: unknown, error: Error) => { throw error },
@@ -28,7 +28,7 @@ const createDocument = () => mathjax.document('', {
   compileError: (_document: unknown, _math: unknown, error: Error) => { throw error },
 })
 
-/** A self-contained SVG in MathJax's 1000-units-per-em coordinates. */
+/** 返回独立 SVG 路径及每 em 对应 1000 单位的几何信息。 */
 export function renderFormulaPaths(content: string, display: boolean) {
   const document = createDocument()
   const container = document.convert(content, { display })
@@ -39,17 +39,13 @@ export function renderFormulaPaths(content: string, display: boolean) {
     throw new Error('Invalid formula dimensions')
   }
   const [x, y, width, height] = viewBox
-  // MathJax keeps the original TeX in data-latex attributes. Its lite
-  // serializer can emit raw `<`/`>` from TeX comparisons, which is tolerated
-  // by the live HTML preview but makes the SVG invalid when loaded as an image
-  // for PNG export. These attributes are metadata only and are not needed for
-  // rendering, so remove them before embedding the paths.
+  // data-latex 中的比较符可能破坏 SVG XML 序列化；元数据不参与渲染，统一移除。
   removeMathJaxSourceAttributes(svg)
   const body = adaptor.innerHTML(svg)
   if (/<(?:foreignObject|script|image)\b|(?:href|xlink:href)=/i.test(body)) {
     throw new Error('Formula contains unsupported external content')
   }
-  // Small ink padding prevents radical/bar edge clipping during PNG rasterization.
+  // 为根号和横线留出边距，避免栅格化时边缘裁切。
   const padding = 40
   return {
     body,

@@ -1,10 +1,8 @@
-<!--
-  Markdown 转 Word 工具页
-  功能描述：提交 Markdown（上传文件或桌面端本地路径）→ 生成 DOCX/DOC → 下载
-  依赖组件：无
--->
+<!-- Markdown 转 Word 工具页：复用来源选择器，组织 DOCX/DOC 转换与下载流程。 -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
+import MarkdownSourcePicker from '@/features/markdown/components/MarkdownSourcePicker.vue'
+import type { MarkdownSource } from '@/features/markdown/source'
 import {
   convertLocalMarkdownToWord,
   convertMarkdownToWord,
@@ -12,119 +10,35 @@ import {
 } from '@/api/tools'
 import type { MarkdownToWordConvertResponse, MarkdownToWordOutputFormat } from '@/api/tools'
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024
-
 type PageState = 'upload' | 'progress' | 'result' | 'error'
-
-/** 待转换来源：本地路径能自动带上同目录图片，上传文件只能靠 ZIP 打包 images/ */
-type SelectedSource =
-  | { kind: 'upload'; name: string; size: number; file: File }
-  | { kind: 'local'; name: string; size: number; path: string }
 
 const currentState = ref<PageState>('upload')
 const outputFormat = ref<MarkdownToWordOutputFormat>('docx')
 const errorMessage = ref('')
-const selectedSource = ref<SelectedSource | null>(null)
+const selectedSource = ref<MarkdownSource | null>(null)
 const currentTaskId = ref('')
 const conversionResult = ref<MarkdownToWordConvertResponse | null>(null)
-const fileInput = ref<HTMLInputElement | null>(null)
-
-const isDesktop = computed(() => Boolean(window.desktopApi?.fileDialog))
+let requestVersion = 0
+onBeforeUnmount(() => { requestVersion++ })
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
-function validateFile(file: File): string | null {
-  const filename = file.name.toLowerCase()
-  if (!filename.endsWith('.md') && !filename.endsWith('.markdown') && !filename.endsWith('.zip')) {
-    return '仅支持 .md、.markdown 或 .zip 格式'
-  }
-  if (file.size > MAX_FILE_SIZE) {
-    return '文件大小不能超过 50MB'
-  }
-  return null
+function handleSource(source: MarkdownSource) {
+  selectedSource.value = source
+  void convertSelected()
 }
 
-function openFilePicker() {
-  fileInput.value?.click()
-}
-
-function onFileChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  void handleFile(file)
-  input.value = ''
-}
-
-function onDrop(event: DragEvent) {
-  event.preventDefault()
-  const file = event.dataTransfer?.files?.[0]
-  if (!file) return
-  void handleFile(file)
-}
-
-function onDragOver(event: DragEvent) {
-  event.preventDefault()
-}
-
-/**
- * 桌面端优先取磁盘路径，后端据此读取 Markdown 同目录的 images/ 等资源。
- * File 跨 contextBridge 传递后会丢失磁盘来源，因此回退到 preload 预先解析的结果。
- */
-function resolveLocalPath(file: File): string {
-  const filename = file.name.toLowerCase()
-  if (!isDesktop.value) return ''
-  if (!filename.endsWith('.md') && !filename.endsWith('.markdown')) return ''
-
-  const fileDialog = window.desktopApi?.fileDialog
-  let direct = ''
-  try {
-    direct = fileDialog?.getPathForFile(file) ?? ''
-  } catch {
-    // contextBridge 复制 File 失败时忽略，改用 preload 预先解析的路径
-  }
-  if (direct) return direct
-
-  const [droppedPath] = fileDialog?.takeDroppedPaths() ?? []
-  return droppedPath && droppedPath.split(/[\\/]/).pop() === file.name ? droppedPath : ''
-}
-
-async function handleFile(file: File) {
-  const localPath = resolveLocalPath(file)
-  if (!localPath) {
-    const validationError = validateFile(file)
-    if (validationError) {
-      errorMessage.value = validationError
-      currentState.value = 'error'
-      return
-    }
-  }
-
-  selectedSource.value = localPath
-    ? { kind: 'local', name: file.name, size: file.size, path: localPath }
-    : { kind: 'upload', name: file.name, size: file.size, file }
-  await convertSelected()
-}
-
-/** 通过系统对话框选择本地 Markdown，自动带出同目录图片 */
-async function pickLocalMarkdown() {
-  const picked = await window.desktopApi?.fileDialog.pickMarkdown()
-  if (!picked) return
-
-  selectedSource.value = {
-    kind: 'local',
-    name: picked.name,
-    size: picked.size,
-    path: picked.path,
-  }
-  await convertSelected()
+function handleSourceError(message: string) {
+  errorMessage.value = message
+  currentState.value = 'error'
 }
 
 async function convertSelected() {
   const source = selectedSource.value
-  if (!source) return
+  if (!source || currentState.value === 'progress') return
+  const version = ++requestVersion
 
   currentTaskId.value = ''
   conversionResult.value = null
@@ -136,10 +50,12 @@ async function convertSelected() {
       source.kind === 'local'
         ? await convertLocalMarkdownToWord(source.path, outputFormat.value)
         : await convertMarkdownToWord(source.file, outputFormat.value)
+    if (version !== requestVersion) return
     conversionResult.value = result
     currentTaskId.value = result.task_id
     currentState.value = 'result'
   } catch (error: unknown) {
+    if (version !== requestVersion) return
     errorMessage.value = getErrorMessage(error, '转换失败，请稍后重试')
     currentState.value = 'error'
   }
@@ -157,6 +73,7 @@ async function handleDownload() {
 }
 
 function resetUpload() {
+  requestVersion++
   currentState.value = 'upload'
   outputFormat.value = 'docx'
   errorMessage.value = ''
@@ -176,60 +93,11 @@ function resetUpload() {
         选择文件
       </div>
 
-      <div v-if="currentState === 'upload' || currentState === 'error'">
-        <div
-          class="border-border hover:border-primary hover:bg-primary-light cursor-pointer rounded-xl border-2 border-dashed py-11 text-center transition-all duration-250"
-          @dragover="onDragOver"
-          @drop="onDrop"
-        >
-          <div class="text-text-tertiary mb-3.5 text-[38px]">
-            <font-awesome-icon :icon="['fas', 'file-word']" aria-hidden="true" />
-          </div>
-          <h2 class="mb-1.5 text-[15px] font-semibold">将 Markdown 文件拖拽到此处</h2>
-          <p class="text-text-secondary mb-[18px] text-[13px]">
-            {{
-              isDesktop
-                ? '桌面端直接读取本地文件，自动带上同目录的 images/ 图片'
-                : '支持直接上传 Markdown，或上传包含 Markdown 与 images/ 目录的 ZIP'
-            }}
-          </p>
-          <div class="flex flex-wrap items-center justify-center gap-3">
-            <button
-              v-if="isDesktop"
-              type="button"
-              class="bg-primary font-inherit hover:bg-primary-dark focus-visible:outline-primary inline-flex cursor-pointer items-center gap-2 rounded-lg px-[22px] py-[9px] text-[13px] font-medium text-white transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-              @click="pickLocalMarkdown"
-            >
-              <font-awesome-icon :icon="['fas', 'folder-open']" aria-hidden="true" />
-              选择本地 Markdown
-            </button>
-            <button
-              type="button"
-              class="font-inherit inline-flex cursor-pointer items-center gap-2 rounded-lg px-[22px] py-[9px] text-[13px] font-medium transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-              :class="
-                isDesktop
-                  ? 'border-border text-text-secondary hover:text-text focus-visible:outline-primary border bg-transparent hover:border-[#999]'
-                  : 'bg-primary hover:bg-primary-dark focus-visible:outline-primary text-white'
-              "
-              @click="openFilePicker"
-            >
-              <font-awesome-icon :icon="['fas', 'upload']" aria-hidden="true" />
-              {{ isDesktop ? '上传文件（ZIP）' : '选择 Markdown 文件' }}
-            </button>
-          </div>
-          <div class="text-text-tertiary mt-3.5 text-[12px]">
-            支持 .md、.markdown、.zip，最大 50MB；ZIP 中只能包含一个 Markdown 文件
-          </div>
-        </div>
-
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".md,.markdown,.zip,text/markdown,application/zip"
-          class="hidden"
-          @change="onFileChange"
-        />
-      </div>
+      <MarkdownSourcePicker
+        v-if="currentState === 'upload' || currentState === 'error'"
+        @select="handleSource"
+        @error="handleSourceError"
+      />
 
       <div
         v-if="currentState === 'progress' || currentState === 'result'"
