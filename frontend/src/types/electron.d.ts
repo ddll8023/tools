@@ -29,6 +29,13 @@ interface UpdaterApi {
   onStatus: (callback: (status: UpdateStatus) => void) => () => void
 }
 
+/** 本地文件选择：桌面端读取磁盘路径，供后端直接访问同目录资源 */
+interface FileDialogApi {
+  pickMarkdown: () => Promise<{ path: string; name: string; size: number } | null>
+  getPathForFile: (file: File) => string
+  takeDroppedPaths: () => string[]
+}
+
 interface DesktopApi {
   platform: string
   versions: {
@@ -38,6 +45,7 @@ interface DesktopApi {
     app: string
   }
   getAppDataPath: () => Promise<string>
+  fileDialog: FileDialogApi
   windowControls: WindowControls
   updater: UpdaterApi
 }

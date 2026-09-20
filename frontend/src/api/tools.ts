@@ -301,7 +301,24 @@ export async function convertMarkdownToWord(
   const formData = new FormData()
   formData.append('file', file)
   formData.append('output_format', outputFormat)
+  return requestConvert(formData)
+}
 
+/**
+ * 转换本地 Markdown：后端按绝对路径读取文件，并自动解析同目录图片资源。
+ * 仅桌面端可用，用于解决单文件上传拿不到 images/ 目录的问题。
+ */
+export async function convertLocalMarkdownToWord(
+  sourcePath: string,
+  outputFormat: MarkdownToWordOutputFormat,
+): Promise<MarkdownToWordConvertResponse> {
+  const formData = new FormData()
+  formData.append('source_path', sourcePath)
+  formData.append('output_format', outputFormat)
+  return requestConvert(formData)
+}
+
+async function requestConvert(formData: FormData): Promise<MarkdownToWordConvertResponse> {
   const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-word/convert`, {
     method: 'POST',
     body: formData,

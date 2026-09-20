@@ -1,19 +1,35 @@
+<!--
+  Markdown 转 Word 工具页
+  功能描述：提交 Markdown（上传文件或桌面端本地路径）→ 生成 DOCX/DOC → 下载
+  依赖组件：无
+-->
 <script setup lang="ts">
-import { ref } from 'vue'
-import { convertMarkdownToWord, downloadMarkdownToWord } from '@/api/tools'
+import { computed, ref } from 'vue'
+import {
+  convertLocalMarkdownToWord,
+  convertMarkdownToWord,
+  downloadMarkdownToWord,
+} from '@/api/tools'
 import type { MarkdownToWordConvertResponse, MarkdownToWordOutputFormat } from '@/api/tools'
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 
 type PageState = 'upload' | 'progress' | 'result' | 'error'
 
+/** 待转换来源：本地路径能自动带上同目录图片，上传文件只能靠 ZIP 打包 images/ */
+type SelectedSource =
+  | { kind: 'upload'; name: string; size: number; file: File }
+  | { kind: 'local'; name: string; size: number; path: string }
+
 const currentState = ref<PageState>('upload')
 const outputFormat = ref<MarkdownToWordOutputFormat>('docx')
 const errorMessage = ref('')
-const selectedFile = ref<File | null>(null)
+const selectedSource = ref<SelectedSource | null>(null)
 const currentTaskId = ref('')
 const conversionResult = ref<MarkdownToWordConvertResponse | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
+
+const isDesktop = computed(() => Boolean(window.desktopApi?.fileDialog))
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
@@ -53,22 +69,73 @@ function onDragOver(event: DragEvent) {
   event.preventDefault()
 }
 
+/**
+ * 桌面端优先取磁盘路径，后端据此读取 Markdown 同目录的 images/ 等资源。
+ * File 跨 contextBridge 传递后会丢失磁盘来源，因此回退到 preload 预先解析的结果。
+ */
+function resolveLocalPath(file: File): string {
+  const filename = file.name.toLowerCase()
+  if (!isDesktop.value) return ''
+  if (!filename.endsWith('.md') && !filename.endsWith('.markdown')) return ''
+
+  const fileDialog = window.desktopApi?.fileDialog
+  let direct = ''
+  try {
+    direct = fileDialog?.getPathForFile(file) ?? ''
+  } catch {
+    // contextBridge 复制 File 失败时忽略，改用 preload 预先解析的路径
+  }
+  if (direct) return direct
+
+  const [droppedPath] = fileDialog?.takeDroppedPaths() ?? []
+  return droppedPath && droppedPath.split(/[\\/]/).pop() === file.name ? droppedPath : ''
+}
+
 async function handleFile(file: File) {
-  const validationError = validateFile(file)
-  if (validationError) {
-    errorMessage.value = validationError
-    currentState.value = 'error'
-    return
+  const localPath = resolveLocalPath(file)
+  if (!localPath) {
+    const validationError = validateFile(file)
+    if (validationError) {
+      errorMessage.value = validationError
+      currentState.value = 'error'
+      return
+    }
   }
 
-  selectedFile.value = file
+  selectedSource.value = localPath
+    ? { kind: 'local', name: file.name, size: file.size, path: localPath }
+    : { kind: 'upload', name: file.name, size: file.size, file }
+  await convertSelected()
+}
+
+/** 通过系统对话框选择本地 Markdown，自动带出同目录图片 */
+async function pickLocalMarkdown() {
+  const picked = await window.desktopApi?.fileDialog.pickMarkdown()
+  if (!picked) return
+
+  selectedSource.value = {
+    kind: 'local',
+    name: picked.name,
+    size: picked.size,
+    path: picked.path,
+  }
+  await convertSelected()
+}
+
+async function convertSelected() {
+  const source = selectedSource.value
+  if (!source) return
+
   currentTaskId.value = ''
   conversionResult.value = null
   errorMessage.value = ''
   currentState.value = 'progress'
 
   try {
-    const result = await convertMarkdownToWord(file, outputFormat.value)
+    const result =
+      source.kind === 'local'
+        ? await convertLocalMarkdownToWord(source.path, outputFormat.value)
+        : await convertMarkdownToWord(source.file, outputFormat.value)
     conversionResult.value = result
     currentTaskId.value = result.task_id
     currentState.value = 'result'
@@ -93,7 +160,7 @@ function resetUpload() {
   currentState.value = 'upload'
   outputFormat.value = 'docx'
   errorMessage.value = ''
-  selectedFile.value = null
+  selectedSource.value = null
   currentTaskId.value = ''
   conversionResult.value = null
 }
@@ -120,16 +187,36 @@ function resetUpload() {
           </div>
           <h2 class="mb-1.5 text-[15px] font-semibold">将 Markdown 文件拖拽到此处</h2>
           <p class="text-text-secondary mb-[18px] text-[13px]">
-            支持直接上传 Markdown，或上传包含 Markdown 与 images/ 目录的 ZIP
+            {{
+              isDesktop
+                ? '桌面端直接读取本地文件，自动带上同目录的 images/ 图片'
+                : '支持直接上传 Markdown，或上传包含 Markdown 与 images/ 目录的 ZIP'
+            }}
           </p>
-          <button
-            type="button"
-            class="bg-primary font-inherit hover:bg-primary-dark focus-visible:outline-primary inline-flex cursor-pointer items-center gap-2 rounded-lg px-[22px] py-[9px] text-[13px] font-medium text-white transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-            @click="openFilePicker"
-          >
-            <font-awesome-icon :icon="['fas', 'upload']" aria-hidden="true" />
-            选择 Markdown 文件
-          </button>
+          <div class="flex flex-wrap items-center justify-center gap-3">
+            <button
+              v-if="isDesktop"
+              type="button"
+              class="bg-primary font-inherit hover:bg-primary-dark focus-visible:outline-primary inline-flex cursor-pointer items-center gap-2 rounded-lg px-[22px] py-[9px] text-[13px] font-medium text-white transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              @click="pickLocalMarkdown"
+            >
+              <font-awesome-icon :icon="['fas', 'folder-open']" aria-hidden="true" />
+              选择本地 Markdown
+            </button>
+            <button
+              type="button"
+              class="font-inherit inline-flex cursor-pointer items-center gap-2 rounded-lg px-[22px] py-[9px] text-[13px] font-medium transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              :class="
+                isDesktop
+                  ? 'border-border text-text-secondary hover:text-text focus-visible:outline-primary border bg-transparent hover:border-[#999]'
+                  : 'bg-primary hover:bg-primary-dark focus-visible:outline-primary text-white'
+              "
+              @click="openFilePicker"
+            >
+              <font-awesome-icon :icon="['fas', 'upload']" aria-hidden="true" />
+              {{ isDesktop ? '上传文件（ZIP）' : '选择 Markdown 文件' }}
+            </button>
+          </div>
           <div class="text-text-tertiary mt-3.5 text-[12px]">
             支持 .md、.markdown、.zip，最大 50MB；ZIP 中只能包含一个 Markdown 文件
           </div>
@@ -153,9 +240,15 @@ function resetUpload() {
           class="text-success"
           aria-hidden="true"
         />
-        <span class="font-medium">{{ selectedFile?.name }}</span>
-        <span v-if="selectedFile" class="text-text-secondary">
-          ({{ (selectedFile.size / 1024 / 1024).toFixed(1) }} MB)
+        <span class="font-medium">{{ selectedSource?.name }}</span>
+        <span v-if="selectedSource" class="text-text-secondary">
+          ({{ (selectedSource.size / 1024 / 1024).toFixed(1) }} MB)
+        </span>
+        <span
+          v-if="selectedSource"
+          class="text-text-secondary rounded-full bg-[#EFEFEA] px-2 py-0.5 text-[11px]"
+        >
+          {{ selectedSource.kind === 'local' ? '本地路径读取' : '文件上传' }}
         </span>
       </div>
     </section>

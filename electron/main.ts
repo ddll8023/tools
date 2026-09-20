@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
-import { existsSync } from 'fs'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { existsSync, statSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
@@ -92,6 +92,31 @@ function registerWindowIpc() {
     mainWindow?.close()
   })
   ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+
+  // 本地 Markdown 选择：返回绝对路径，后端据此读取同目录 images/ 资源
+  ipcMain.handle('dialog:pick-markdown', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: '选择 Markdown 文件',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Markdown', extensions: ['md', 'markdown'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    }
+
+    const result =
+      mainWindow && !mainWindow.isDestroyed()
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+
+    const filePath = result.filePaths[0]
+    try {
+      return { path: filePath, name: path.basename(filePath), size: statSync(filePath).size }
+    } catch {
+      return null
+    }
+  })
 }
 
 /** 终止进程树：macOS/Linux 杀进程组，Windows 用 taskkill /T */

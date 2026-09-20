@@ -37,6 +37,11 @@ OutputFormat = Literal["docx", "doc"]
 
 CONVERT_TIMEOUT = 120
 
+_UPLOAD_IMAGE_HINT = (
+    "图片文件未随 Markdown 一起提供：桌面端可用「选择本地 Markdown」直接读取同目录图片，"
+    "或把 .md 与 images/ 目录一起打包成 ZIP 上传"
+)
+
 
 _POPEN_KWARGS: dict[str, int] = {}
 if os.name == "nt":
@@ -49,6 +54,7 @@ class _SourceBundle:
 
     markdown_path: Path
     base_dir: Path
+    from_local: bool = False
 
 
 class _InputError(Exception):
@@ -60,27 +66,22 @@ class _ArchiveLimitError(_InputError):
 
 
 def convert_markdown_to_word(
-    file: UploadFile,
+    file: UploadFile | None,
     output_format: str = "docx",
+    source_path: str | None = None,
 ) -> ConvertResponse:
-    """接收 Markdown 或资源 ZIP，并生成 DOCX/DOC。"""
+    """接收本地 Markdown 路径、上传的 Markdown 或资源 ZIP，并生成 DOCX/DOC。"""
     normalized_format = output_format.lower().strip()
     if normalized_format not in {"docx", "doc"}:
         raise ServiceException(ErrorCode.PARAM_ERROR, "输出格式必须是 docx 或 doc")
     selected_format: OutputFormat = "doc" if normalized_format == "doc" else "docx"
 
-    filename = safe_filename(file.filename, "document.md")
-    extension = Path(filename).suffix.lower()
-    if extension not in SUPPORTED_INPUT_EXTENSIONS:
-        raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "仅支持 .md、.markdown 或 .zip 文件")
-
-    content = _read_upload(file)
     task_id = uuid.uuid4().hex[:12]
     task_dir = Path(get_task_dir(task_id))
     task_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        source = _prepare_source(task_dir, filename, content, extension)
+        source, filename = _prepare_source(file, source_path, task_dir)
         markdown_content = _read_markdown(source.markdown_path)
         output_stem = safe_filename(source.markdown_path.stem, "document")
         output_filename = f"{output_stem}.{selected_format}"
@@ -97,6 +98,7 @@ def convert_markdown_to_word(
             source.base_dir,
             docx_path,
         )
+        warnings.extend(_missing_image_hints(source, warnings))
         _validate_docx(docx_path)
 
         output_path = docx_path
@@ -174,6 +176,15 @@ def download_word(task_id: str) -> tuple[str, str, str]:
     return str(output_path), output_filename, media_type
 
 
+def _missing_image_hints(source: _SourceBundle, warnings: list[str]) -> list[str]:
+    """Markdown 引用的图片全部缺失时，补充可恢复操作的提示。"""
+    if source.from_local:
+        return []
+    if not any("图片文件不存在" in warning for warning in warnings):
+        return []
+    return [_UPLOAD_IMAGE_HINT]
+
+
 def _read_upload(file: UploadFile) -> bytes:
     try:
         content = file.file.read(MAX_FILE_SIZE + 1)
@@ -188,6 +199,59 @@ def _read_upload(file: UploadFile) -> bytes:
 
 
 def _prepare_source(
+    file: UploadFile | None,
+    source_path: str | None,
+    task_dir: Path,
+) -> tuple[_SourceBundle, str]:
+    """按本地路径或上传内容准备 Markdown 来源，返回来源与原始文件名。"""
+    local_path = (source_path or "").strip()
+    if local_path:
+        return _prepare_local_source(local_path)
+
+    if file is None:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "请上传 Markdown 文件或提供本地 Markdown 路径")
+
+    filename = safe_filename(file.filename, "document.md")
+    extension = Path(filename).suffix.lower()
+    if extension not in SUPPORTED_INPUT_EXTENSIONS:
+        raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "仅支持 .md、.markdown 或 .zip 文件")
+
+    content = _read_upload(file)
+    return _prepare_uploaded_source(task_dir, filename, content, extension), filename
+
+
+def _prepare_local_source(raw_path: str) -> tuple[_SourceBundle, str]:
+    """校验本地 Markdown 路径，并以所在目录作为图片基准目录。"""
+    path = Path(raw_path).expanduser()
+    if path.suffix.lower() not in SUPPORTED_MARKDOWN_EXTENSIONS:
+        raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "本地文件必须是 .md 或 .markdown")
+
+    try:
+        is_file = path.is_file()
+        size = path.stat().st_size if is_file else 0
+    except OSError as exc:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 Markdown 文件不存在或无法读取") from exc
+
+    if not is_file:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 Markdown 文件不存在或无法读取")
+    if size == 0:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "文件不能为空")
+    if size > MAX_FILE_SIZE:
+        raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
+
+    markdown_path = path.resolve()
+    filename = safe_filename(markdown_path.name, "document.md")
+    return (
+        _SourceBundle(
+            markdown_path=markdown_path,
+            base_dir=markdown_path.parent,
+            from_local=True,
+        ),
+        filename,
+    )
+
+
+def _prepare_uploaded_source(
     task_dir: Path,
     filename: str,
     content: bytes,

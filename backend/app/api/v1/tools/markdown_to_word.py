@@ -1,5 +1,7 @@
 """Markdown 转 Word 接口。"""
 
+from typing import Annotated
+
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse
 
@@ -16,17 +18,19 @@ router = APIRouter(prefix="/api/v1/tools/markdown-to-word", tags=["markdown-to-w
 
 @router.post("/convert", response_model=ApiResponse[ConvertResponse])
 def convert_markdown_to_word(
-    file: UploadFile = File(...),
-    output_format: str = Form("docx"),
+    file: Annotated[UploadFile | None, File(description="Markdown 或资源 ZIP 文件")] = None,
+    output_format: Annotated[str, Form(description="输出格式 docx 或 doc")] = "docx",
+    source_path: Annotated[str | None, Form(description="桌面端本地 Markdown 绝对路径")] = None,
 ):
-    """上传 Markdown 或资源 ZIP 并转换为 Word。"""
+    """上传 Markdown/资源 ZIP，或按本地路径读取 Markdown 并转换为 Word。"""
     logger.info(
-        "API Markdown 转 Word 请求: file=%s format=%s",
-        file.filename,
+        "API Markdown 转 Word 请求: file=%s source_path=%s format=%s",
+        file.filename if file is not None else None,
+        source_path,
         output_format,
     )
     try:
-        result = services_markdown_to_word.convert_markdown_to_word(file, output_format)
+        result = services_markdown_to_word.convert_markdown_to_word(file, output_format, source_path)
         return success(data=result)
     except ServiceException as exc:
         return error(code=exc.code, message=exc.message)
