@@ -1,10 +1,5 @@
-"""Markdown 内容统计工具"""
+"""兼容导出 Markdown 统计能力，避免迁移期间破坏旧模块导入。"""
 
-import re
+from app.modules.markdown_document.metrics import count_tables
 
-_TABLE_SEPARATOR_RE = re.compile(r"(?m)^\s*\|(?:\s*:?-+:?\s*\|)+\s*$")
-
-
-def count_tables(markdown: str) -> int:
-    """统计 Markdown 表格数量（按分隔行计数，而非表格行数）。"""
-    return len(_TABLE_SEPARATOR_RE.findall(markdown))
+__all__ = ["count_tables"]

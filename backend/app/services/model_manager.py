@@ -18,7 +18,7 @@ from typing import IO
 
 from app.core.config import settings
 from app.schemas.response import ErrorCode
-from app.utils.exception import ServiceException
+from app.core.errors import ServiceException
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)

@@ -12,7 +12,7 @@ from reportlab.graphics.barcode import qrencoder
 
 from app.schemas.response import ErrorCode
 from app.schemas.tools.qr_code import GenerateResponse
-from app.utils.exception import ServiceException
+from app.core.errors import ServiceException
 from app.utils.file import safe_filename
 from app.utils.logger_config import setup_logger
 

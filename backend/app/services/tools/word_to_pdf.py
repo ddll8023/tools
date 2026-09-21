@@ -9,9 +9,13 @@ from pathlib import Path
 from fastapi import UploadFile
 
 from app.utils.file import save_file, safe_filename
-from app.utils.libreoffice import convert_to_pdf
-from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
-from app.utils.exception import ServiceException
+from app.integrations.libreoffice import convert_to_pdf
+from app.infrastructure.task_storage.workspace import (
+    ensure_task_path,
+    get_task_dir,
+    validate_task_id,
+)
+from app.core.errors import ServiceException
 from app.schemas.response import ErrorCode
 from app.schemas.tools.word_to_pdf import ConvertResponse
 from app.utils.logger_config import setup_logger
@@ -80,11 +84,10 @@ def download_pdf(task_id: str) -> tuple:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     task_dir = get_task_dir(task_id)
-    root = os.path.abspath(TEMP_DIR)
-    if os.path.commonpath([root, os.path.abspath(task_dir)]) != root:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
+    ensure_task_path(task_dir)
 
     pdf_path = os.path.join(task_dir, "output.pdf")
+    ensure_task_path(pdf_path)
     if not os.path.exists(pdf_path):
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在")
 

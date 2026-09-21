@@ -1,5 +1,5 @@
-class ServiceException(Exception):
-    def __init__(self, code: int, message: str):
-        self.code = code
-        self.message = message
-        super().__init__(message)
+"""兼容导出核心业务异常，避免迁移期间破坏既有内部导入。"""
+
+from app.core.errors import ServiceException
+
+__all__ = ["ServiceException"]

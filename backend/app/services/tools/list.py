@@ -1,28 +1,11 @@
-"""工具列表获取服务"""
+"""工具列表获取服务。"""
 
+from app.core.capabilities import (
+    CAPABILITY_ID_PHOTO,
+    CAPABILITY_LIBREOFFICE,
+    capabilities,
+)
 from app.schemas.tools.list import ToolListItem
-
-# 全局可用性状态，由 main.py lifespan 在启动时设定
-_libreoffice_available = False
-_libreoffice_unavailable_reason = "未检测到 LibreOffice"
-_id_photo_available = False
-_id_photo_unavailable_reason = "证件照模型或运行依赖不可用"
-
-
-def set_libreoffice_available(available: bool, reason: str | None = None):
-    """设置 LibreOffice 可用性（由 main.py lifespan 调用）"""
-    global _libreoffice_available, _libreoffice_unavailable_reason
-    _libreoffice_available = available
-    if reason:
-        _libreoffice_unavailable_reason = reason
-
-
-def set_id_photo_available(available: bool, reason: str | None = None):
-    """设置证件照工具可用性（由 main.py lifespan 调用）"""
-    global _id_photo_available, _id_photo_unavailable_reason
-    _id_photo_available = available
-    if reason:
-        _id_photo_unavailable_reason = reason
 
 
 _TOOLS = [
@@ -92,9 +75,11 @@ _TOOLS = [
 ]
 
 
-def get_tool_list():
-    """获取工具列表（动态填充可用性状态）"""
+def get_tool_list() -> list[ToolListItem]:
+    """获取工具列表，并填充启动期探测到的可用性状态。"""
     result = list(_TOOLS)
+    id_photo_status = capabilities.get(CAPABILITY_ID_PHOTO)
+    libreoffice_status = capabilities.get(CAPABILITY_LIBREOFFICE)
 
     id_photo_tool = ToolListItem(
         id="id-photo",
@@ -103,8 +88,10 @@ def get_tool_list():
         display_name="证件照",
         description="本地生成证件照，支持抠图、换背景、规格调整和六寸排版",
         icon="fas fa-id-card",
-        available=_id_photo_available,
-        unavailable_reason=None if _id_photo_available else _id_photo_unavailable_reason,
+        available=id_photo_status.available,
+        unavailable_reason=(
+            None if id_photo_status.available else id_photo_status.reason
+        ),
     )
     result.append(id_photo_tool)
 
@@ -115,8 +102,10 @@ def get_tool_list():
         display_name="Markdown 转 PDF",
         description="将 Markdown 按 Word 排版链路转换为 PDF，支持图片和中文内容",
         icon="fas fa-file-pdf",
-        available=_libreoffice_available,
-        unavailable_reason=None if _libreoffice_available else _libreoffice_unavailable_reason,
+        available=libreoffice_status.available,
+        unavailable_reason=(
+            None if libreoffice_status.available else libreoffice_status.reason
+        ),
     )
     result.append(markdown_pdf_tool)
 
@@ -127,8 +116,10 @@ def get_tool_list():
         display_name="Word 转 PDF",
         description="将 Word 文档（.doc/.docx）转换为 PDF 格式",
         icon="fas fa-file-word",
-        available=_libreoffice_available,
-        unavailable_reason=None if _libreoffice_available else _libreoffice_unavailable_reason,
+        available=libreoffice_status.available,
+        unavailable_reason=(
+            None if libreoffice_status.available else libreoffice_status.reason
+        ),
     )
     result.append(word_tool)
 

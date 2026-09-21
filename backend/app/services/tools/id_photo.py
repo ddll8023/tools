@@ -29,10 +29,14 @@ from app.schemas.tools.id_photo import (
     IdPhotoResponse,
     IdPhotoTemplateItem,
 )
-from app.utils.exception import ServiceException
+from app.core.errors import ServiceException
 from app.utils.file import safe_filename
 from app.utils.logger_config import setup_logger
-from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
+from app.infrastructure.task_storage.workspace import (
+    ensure_task_path,
+    get_task_dir,
+    validate_task_id,
+)
 
 logger = setup_logger(__name__)
 
@@ -710,17 +714,10 @@ def _task_dir_checked(task_id: str) -> str:
     if not validate_task_id(task_id):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
-    task_dir = os.path.abspath(get_task_dir(task_id))
-    temp_root = os.path.abspath(TEMP_DIR)
-    try:
-        if os.path.commonpath([temp_root, task_dir]) != temp_root:
-            raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
-    except ValueError as exc:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误") from exc
-
-    if not os.path.isdir(task_dir):
+    task_dir = ensure_task_path(get_task_dir(task_id))
+    if not task_dir.is_dir():
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在或已过期")
-    return task_dir
+    return str(task_dir)
 
 
 def _read_metadata(task_dir: str) -> dict:

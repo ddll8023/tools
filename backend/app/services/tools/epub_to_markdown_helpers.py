@@ -14,20 +14,25 @@ from markdownify import markdownify
 
 from app.schemas.response import ErrorCode
 from app.schemas.tools.epub_to_markdown import GetPreviewResponse
-from app.utils.exception import ServiceException
+from app.core.errors import ServiceException
 from app.utils.logger_config import setup_logger
-from app.utils.markdown import count_tables
-from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
+from app.modules.markdown_document.metrics import count_tables
+from app.infrastructure.task_storage.workspace import (
+    UPLOADS_DIR,
+    ensure_task_path,
+    get_task_dir,
+    validate_task_id,
+)
 
 logger = setup_logger(__name__)
 
-# EPUB 模块内部仍使用 _count_tables 名称，实现统一来自 utils.markdown
+# EPUB 模块内部仍使用 _count_tables 名称，实际实现来自 Markdown 文档能力模块。
 _count_tables = count_tables
 
 MAX_ENTRY_COUNT = 10_000
 MAX_UNCOMPRESSED_SIZE = 200 * 1024 * 1024
 MAX_ENTRY_SIZE = 50 * 1024 * 1024
-TEMP_UPLOADS_DIR = os.path.join(TEMP_DIR, "uploads")
+TEMP_UPLOADS_DIR = UPLOADS_DIR
 CHAPTER_COUNT_FILE = "chapter_count.txt"
 
 _XML_NS = {
@@ -311,9 +316,7 @@ def _task_path(task_id: str) -> str:
     if not validate_task_id(task_id):
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
     task_dir = get_task_dir(task_id)
-    root = os.path.abspath(TEMP_DIR)
-    if os.path.commonpath([root, os.path.abspath(task_dir)]) != root:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
+    ensure_task_path(task_dir)
     return task_dir
 
 

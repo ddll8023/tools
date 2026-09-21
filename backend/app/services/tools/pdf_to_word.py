@@ -15,10 +15,14 @@ from fastapi import UploadFile
 
 from app.schemas.response import ErrorCode
 from app.schemas.tools.pdf_to_word import ConvertResponse
-from app.utils.exception import ServiceException
+from app.core.errors import ServiceException
 from app.utils.file import safe_filename, save_file
 from app.utils.logger_config import setup_logger
-from app.utils.temp_cleanup import TEMP_DIR, get_task_dir, validate_task_id
+from app.infrastructure.task_storage.workspace import (
+    ensure_task_path,
+    get_task_dir,
+    validate_task_id,
+)
 
 logger = setup_logger(__name__)
 
@@ -39,18 +43,6 @@ class PdfInspection:
         if self.text_page_count < self.page_count:
             return ["部分页面未检测到文字层，转换结果可能需要人工校对"]
         return []
-
-
-def _check_task_path(task_dir: str) -> None:
-    """确保任务目录仍位于临时目录内。"""
-    root = os.path.realpath(TEMP_DIR)
-    candidate = os.path.realpath(task_dir)
-    try:
-        is_inside = os.path.commonpath([root, candidate]) == root
-    except ValueError:
-        is_inside = False
-    if not is_inside:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
 
 def _inspect_pdf(pdf_path: str) -> PdfInspection:
@@ -210,15 +202,15 @@ def download_docx(task_id: str) -> tuple[str, str]:
         raise ServiceException(ErrorCode.PARAM_ERROR, "参数错误")
 
     task_dir = get_task_dir(task_id)
-    _check_task_path(task_dir)
+    ensure_task_path(task_dir)
     output_path = os.path.join(task_dir, "output.docx")
-    _check_task_path(output_path)
+    ensure_task_path(output_path)
     if not os.path.isfile(output_path):
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, "文件不存在")
 
     output_filename = f"{task_id}.docx"
     meta_path = os.path.join(task_dir, "meta.json")
-    _check_task_path(meta_path)
+    ensure_task_path(meta_path)
     try:
         with open(meta_path, encoding="utf-8") as stream:
             metadata = json.load(stream)

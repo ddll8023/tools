@@ -1,75 +1,11 @@
 """创建本地工具 API 应用，统一注册路由、生命周期及异常处理。"""
 
-import os
-import subprocess
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from app.api.v1.health import router as health_router
-from app.api.v1.tools.list import router as tools_list_router
-from app.api.v1.tools import pdf_to_markdown as router_pdf_to_markdown
-from app.api.v1.tools import word_to_pdf as router_word_to_pdf
-from app.api.v1.tools import image_converter as router_image_converter
-from app.api.v1.tools import epub_to_markdown as router_epub_to_markdown
-from app.api.v1.tools import pdf_to_word as router_pdf_to_word
-from app.api.v1.tools import markdown_to_word as router_markdown_to_word
-from app.api.v1.tools import markdown_to_pdf as router_markdown_to_pdf
-from app.api.v1.tools import qr_code as router_qr_code
-from app.api.v1.tools import id_photo as router_id_photo
-from app.api.v1 import settings as router_settings
-from app.schemas.response import ErrorCode
-from app.utils.logger_config import setup_logger
-from app.utils.exception import ServiceException
-from app.utils.temp_cleanup import cleanup_expired_temp
-from app.services.tools.list import set_id_photo_available, set_libreoffice_available
-from app.services.tools.id_photo import get_model_status
-from app.core.config import settings
 
-logger = setup_logger(__name__)
-
-
-def check_libreoffice():
-    """检测 LibreOffice 是否可用"""
-    soffice_path = settings.libreoffice_path
-    try:
-        result = subprocess.run(
-            [soffice_path, "--version"],
-            check=True, capture_output=True, timeout=10,
-        )
-        version = result.stdout.decode().strip()
-        logger.info(f"LibreOffice 检测成功: {version}")
-        return True
-    except FileNotFoundError:
-        if soffice_path == "soffice":
-            logger.warning("LibreOffice 未安装（soffice 不在 PATH 中）")
-        else:
-            logger.warning(f"LibreOffice 便携版未找到: {soffice_path}")
-        return False
-    except Exception as e:
-        logger.warning(f"LibreOffice 检测失败: {e}")
-        return False
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    os.makedirs(settings.data_root, exist_ok=True)
-
-    logger.info("启动清理过期临时文件...")
-    cleanup_expired_temp()
-
-    logger.info("检测 LibreOffice...")
-    libreoffice_ok = check_libreoffice()
-    set_libreoffice_available(libreoffice_ok)
-
-    logger.info("检测证件照模型和运行依赖...")
-    id_photo_ok, id_photo_reason = get_model_status()
-    set_id_photo_available(id_photo_ok, id_photo_reason)
-    if id_photo_ok:
-        logger.info("证件照模型检测成功")
-    else:
-        logger.warning(f"证件照工具不可用: {id_photo_reason}")
-    yield
+from app.api.exception_handlers import register_exception_handlers
+from app.api.router import router as api_router
+from app.lifecycle import lifespan
 
 
 app = FastAPI(title="工具盒子", version="0.1.1", lifespan=lifespan)
@@ -82,32 +18,5 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-app.include_router(health_router)
-app.include_router(tools_list_router)
-app.include_router(router_pdf_to_markdown.router)
-app.include_router(router_word_to_pdf.router)
-app.include_router(router_image_converter.router)
-app.include_router(router_epub_to_markdown.router)
-app.include_router(router_pdf_to_word.router)
-app.include_router(router_markdown_to_word.router)
-app.include_router(router_markdown_to_pdf.router)
-app.include_router(router_qr_code.router)
-app.include_router(router_id_photo.router)
-app.include_router(router_settings.router)
-
-
-@app.exception_handler(ServiceException)
-async def service_exception_handler(request: Request, exc: ServiceException):
-    return JSONResponse(
-        status_code=200,
-        content={"code": exc.code, "message": exc.message, "data": None},
-    )
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"全局异常: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=200,
-        content={"code": ErrorCode.INTERNAL_ERROR, "message": "系统内部错误", "data": None},
-    )
+app.include_router(api_router)
+register_exception_handlers(app)

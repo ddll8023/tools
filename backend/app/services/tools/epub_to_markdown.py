@@ -8,18 +8,17 @@ from fastapi import UploadFile
 
 from app.schemas.response import ErrorCode
 from app.schemas.tools.epub_to_markdown import ConvertResponse
+from app.infrastructure.task_storage.workspace import UPLOADS_DIR, get_task_dir
 from app.services.tools.epub_to_markdown_helpers import (
     CHAPTER_COUNT_FILE,
-    TEMP_UPLOADS_DIR,
     convert_epub,
     create_download_zip,
     get_preview_detail,
     validate_and_extract_epub,
 )
-from app.utils.exception import ServiceException
+from app.core.errors import ServiceException
 from app.utils.file import save_file, safe_filename
 from app.utils.logger_config import setup_logger
-from app.utils.temp_cleanup import get_task_dir
 
 logger = setup_logger(__name__)
 
@@ -42,8 +41,8 @@ def convert_epub_file(file: UploadFile) -> ConvertResponse:
     task_dir = get_task_dir(task_id)
     extract_dir = os.path.join(task_dir, "epub")
     os.makedirs(extract_dir, exist_ok=True)
-    os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
-    upload_path = os.path.join(TEMP_UPLOADS_DIR, f"{task_id}-{filename}")
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    upload_path = os.path.join(UPLOADS_DIR, f"{task_id}-{filename}")
     save_file(content, upload_path)
     try:
         validate_and_extract_epub(upload_path, extract_dir)
