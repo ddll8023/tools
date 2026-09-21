@@ -28,7 +28,6 @@ DEFAULT_DATA_ROOT = _default_data_root()
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "sqlite:///./data/toolbox.db"
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 4740
     MINERU_MODEL_PATH: str = ""
@@ -47,19 +46,6 @@ class Settings(BaseSettings):
         if self.TOOLBOX_DATA_DIR:
             return os.path.abspath(self.TOOLBOX_DATA_DIR)
         return DEFAULT_DATA_ROOT
-
-    @property
-    def database_url(self) -> str:
-        """将相对 SQLite 路径解析到统一用户数据目录。"""
-        if not self.DATABASE_URL.startswith("sqlite:///"):
-            return self.DATABASE_URL
-
-        database_path = self.DATABASE_URL[len("sqlite:///"):]
-        if database_path == ":memory:":
-            return self.DATABASE_URL
-        if not os.path.isabs(database_path):
-            database_path = os.path.join(self.data_root, database_path)
-        return f"sqlite:///{os.path.normpath(database_path)}"
 
     @staticmethod
     def _resolve_path(value: str, base: str) -> str:
