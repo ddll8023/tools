@@ -37,7 +37,7 @@ if resource_dir.is_dir():
 app_entry = BACKEND_ROOT / "packaging" / "server.py"
 a = Analysis(
     [str(app_entry)],
-    pathex=[str(BACKEND_ROOT)],
+    pathex=[str(BACKEND_ROOT / "src"), str(BACKEND_ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

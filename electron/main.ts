@@ -195,7 +195,8 @@ function startBackend(): Promise<void> {
     const command = isDev ? 'uv' : PACKAGED_BACKEND_EXECUTABLE
     const args = isDev
       ? [
-          'run', 'uvicorn', 'app.main:app',
+          'run', 'uvicorn', 'toolbox_backend.main:app',
+          '--app-dir', 'src',
           '--host', '127.0.0.1', '--port', String(BACKEND_PORT),
         ]
       : []

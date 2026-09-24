@@ -36,7 +36,7 @@ def main() -> None:
     multiprocessing.freeze_support()
 
     import uvicorn
-    from app.main import app
+    from toolbox_backend.main import app
 
     uvicorn.run(
         app,

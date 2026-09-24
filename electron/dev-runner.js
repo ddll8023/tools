@@ -163,7 +163,8 @@ async function main() {
     throw new Error(`未找到后端 Python 环境，请先执行 uv sync --directory backend`)
   }
   backendProc = spawn(pythonBin, [
-    '-m', 'uvicorn', 'app.main:app',
+    '-m', 'uvicorn', 'toolbox_backend.main:app',
+    '--app-dir', 'src',
     '--host', '127.0.0.1', '--port', String(BACKEND_PORT),
   ], {
     cwd: BACKEND_DIR,
