@@ -1,3 +1,4 @@
+/** 思维导图树操作测试：验证节点移动、排序和树结构不变性。 */
 import { describe, expect, it } from 'vitest'
 import type { MindMapData } from '../types'
 import {
@@ -7,6 +8,7 @@ import {
   removeNodeMulti,
   findSubtreeMulti,
   moveNodeMulti,
+  moveSiblingMulti,
   regenerateIds,
   swapSiblingsMulti,
 } from './tree-ops'
@@ -95,6 +97,24 @@ describe('swapSiblingsMulti', () => {
 
     expect(next.map((root) => root.id)).toEqual(['r2', 'r1'])
     expect(roots.map((root) => root.id)).toEqual(['r1', 'r2'])
+  })
+})
+
+describe('moveSiblingMulti', () => {
+  it('moves nested siblings before or after a target without changing subtrees', () => {
+    const roots = sampleRoots()
+    const next = moveSiblingMulti(roots, 'b', 'a', 'before')
+
+    expect(next[0].children?.map((child) => child.id)).toEqual(['b', 'a'])
+    expect(next[0].children?.[0].children?.map((child) => child.id)).toEqual(['b1'])
+    expect(roots[0].children?.map((child) => child.id)).toEqual(['a', 'b'])
+  })
+
+  it('moves independent roots after a target', () => {
+    const roots = sampleRoots()
+    const next = moveSiblingMulti(roots, 'r1', 'r2', 'after')
+
+    expect(next.map((root) => root.id)).toEqual(['r2', 'r1'])
   })
 })
 

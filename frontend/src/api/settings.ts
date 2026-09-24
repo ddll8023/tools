@@ -1,10 +1,12 @@
+/** 设置页的本地模型状态与管理 API。 */
 import type { ApiResponse } from '@/types/tool'
 
 const API_BASE = 'http://127.0.0.1:4740'
 
 export const MINERU_PIPELINE_MODEL_ID = 'mineru-pipeline' as const
+export const ID_PHOTO_MODEL_ID = 'id-photo' as const
 
-export type ModelId = typeof MINERU_PIPELINE_MODEL_ID
+export type ModelId = typeof MINERU_PIPELINE_MODEL_ID | typeof ID_PHOTO_MODEL_ID
 export type ModelStatus =
   | 'not_downloaded'
   | 'downloading'
@@ -12,6 +14,8 @@ export type ModelStatus =
   | 'failed'
   | 'interrupted'
   | 'cancelled'
+  | 'incomplete'
+  | 'unavailable'
 
 export interface ModelStatusItem {
   model_id: ModelId
@@ -19,12 +23,14 @@ export interface ModelStatusItem {
   description: string
   source: string
   path: string
-  approx_size_bytes: number
+  approx_size_bytes: number | null
   status: ModelStatus
   progress: number | null
   stage: string
   error: string | null
   job_id: string | null
+  can_delete: boolean
+  delete_reason: string | null
 }
 
 interface ModelStatusResponse {
@@ -60,6 +66,15 @@ export async function startModelDownload(modelId: ModelId): Promise<ModelStatusI
 
 export async function cancelModelDownload(modelId: ModelId): Promise<ModelStatusItem> {
   const response = await fetch(`${API_BASE}/api/v1/settings/models/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model_id: modelId }),
+  })
+  return readModelResponse<ModelStatusItem>(response)
+}
+
+export async function deleteModel(modelId: ModelId): Promise<ModelStatusItem> {
+  const response = await fetch(`${API_BASE}/api/v1/settings/models/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model_id: modelId }),

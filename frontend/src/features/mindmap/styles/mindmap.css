@@ -32,6 +32,16 @@
   cursor: pointer;
 }
 
+.mindmap-node-dragging {
+  opacity: 0.48;
+}
+
+.mindmap-drop-indicator {
+  pointer-events: none;
+  opacity: 0.9;
+  stroke-dasharray: 7 4;
+}
+
 /* SVG graphics can show a browser focus ring after a mouse click. */
 .mindmap-node-g:focus {
   outline: none;

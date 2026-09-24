@@ -6,15 +6,17 @@ import re
 import shutil
 import threading
 import subprocess
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
 from fastapi import UploadFile
 
 from app.core.config import settings
 from app.services.model_manager import (
+    acquire_mineru_model_use,
     get_mineru_convert_command,
     get_mineru_runtime_env,
+    release_mineru_model_use,
     require_mineru_model,
 )
 from app.utils.file import save_file, safe_filename
@@ -52,31 +54,38 @@ def convert_pdf_deep(file: UploadFile):
     if file.size > 50 * 1024 * 1024:
         raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
 
-    # 模型必须由用户在设置页显式准备，深度解析请求不再隐式下载。
-    require_mineru_model()
+    acquire_mineru_model_use()
+    submitted = False
+    try:
+        # 模型必须由用户在设置页显式准备，深度解析请求不再隐式下载。
+        require_mineru_model()
 
-    task_id = uuid.uuid4().hex[:12]
-    task_dir = get_task_dir(task_id)
-    os.makedirs(task_dir, exist_ok=True)
+        task_id = uuid.uuid4().hex[:12]
+        task_dir = get_task_dir(task_id)
+        os.makedirs(task_dir, exist_ok=True)
 
-    # 记录原始文件名，供下载命名使用
-    with open(os.path.join(task_dir, "meta.txt"), "w", encoding="utf-8") as f:
-        f.write(safe_name)
+        # 记录原始文件名，供下载命名使用
+        with open(os.path.join(task_dir, "meta.txt"), "w", encoding="utf-8") as f:
+            f.write(safe_name)
 
-    # 保存原始 PDF 到 uploads/（带 task_id 前缀）
-    upload_filename = f"{task_id}-{safe_name}"
-    upload_path = os.path.join(UPLOADS_DIR, upload_filename)
-    save_file(file.file.read(), upload_path)
+        # 保存原始 PDF 到 uploads/（带 task_id 前缀）
+        upload_filename = f"{task_id}-{safe_name}"
+        upload_path = os.path.join(UPLOADS_DIR, upload_filename)
+        save_file(file.file.read(), upload_path)
 
-    # 复制到任务目录
-    pdf_path = os.path.join(task_dir, "input.pdf")
-    shutil.copy2(upload_path, pdf_path)
+        # 复制到任务目录
+        pdf_path = os.path.join(task_dir, "input.pdf")
+        shutil.copy2(upload_path, pdf_path)
 
-    write_status_atomic(task_dir, 0, "排队等待中...")
+        write_status_atomic(task_dir, 0, "排队等待中...")
 
-    _submit_mineru_task(task_id, pdf_path, task_dir)
-
-    return ConvertResponse(task_id=task_id, filename=safe_name, page_count=0)
+        future = _submit_mineru_task(task_id, pdf_path, task_dir)
+        future.add_done_callback(lambda _future: release_mineru_model_use())
+        submitted = True
+        return ConvertResponse(task_id=task_id, filename=safe_name, page_count=0)
+    finally:
+        if not submitted:
+            release_mineru_model_use()
 
 
 # ========== 模块级单例执行器：深度解析串行排队，避免并发任务各加载一份大模型 ==========
@@ -101,14 +110,24 @@ def _reset_executor() -> None:
         _executor = ProcessPoolExecutor(max_workers=1)
 
 
-def _submit_mineru_task(task_id: str, pdf_path: str, task_dir: str) -> None:
+def _submit_mineru_task(task_id: str, pdf_path: str, task_dir: str) -> Future[None]:
     """提交深度解析任务；工作进程此前崩溃时重建执行器并重试一次。"""
     try:
-        _get_executor().submit(_run_mineru_convert, task_id, pdf_path, task_dir)
+        return _get_executor().submit(_run_mineru_convert, task_id, pdf_path, task_dir)
     except BrokenProcessPool:
         logger.warning("MinerU 工作进程已崩溃，重建执行器后重新提交")
         _reset_executor()
-        _get_executor().submit(_run_mineru_convert, task_id, pdf_path, task_dir)
+        return _get_executor().submit(_run_mineru_convert, task_id, pdf_path, task_dir)
+
+
+def stop_mineru_executor() -> None:
+    """停止空闲 MinerU 工作进程，避免删除模型时仍有进程持有资源。"""
+    global _executor
+    with _EXECUTOR_LOCK:
+        executor = _executor
+        _executor = None
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def get_progress_detail(task_id: str):

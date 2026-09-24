@@ -1,7 +1,7 @@
 """证件照处理服务。
 
 处理链路参考 HivisionIDPhotos：本地人脸检测、人像抠图、规格裁切、换底和排版。
-用户照片只在本地临时任务目录中流转，模型资源从项目 resources 目录读取。
+用户照片只在本地临时任务目录中流转；模型资源按配置从应用资源或用户数据目录读取。
 """
 
 from __future__ import annotations
@@ -14,8 +14,12 @@ import shutil
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import wraps
 from io import BytesIO
+from pathlib import Path
+from typing import ParamSpec, TypeVar
 
 import cv2
 import numpy as np
@@ -131,6 +135,11 @@ _MATTE_LOCK = threading.Lock()
 _MTCNN_INSTANCE = None
 _MTCNN_LOCK = threading.Lock()
 _RENDER_LOCK = threading.RLock()
+_MODEL_USE_CONDITION = threading.Condition()
+_ACTIVE_MODEL_USES = 0
+_MODEL_DELETE_IN_PROGRESS = False
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 def list_templates() -> list[IdPhotoTemplateItem]:
@@ -180,25 +189,152 @@ def _mtcnn_weight_paths() -> dict[str, str]:
 
 
 def get_model_status() -> tuple[bool, str]:
-    """检查证件照所需依赖和项目内模型资源是否可用。"""
+    """检查证件照所需依赖和当前模型资源是否可用。"""
     matte_model = _find_matte_model()
     if matte_model is None:
         names = "、".join(MATTE_MODEL_CANDIDATES)
-        return False, f"缺少人像抠图模型，请准备项目 resources/id_photo 目录中的模型（需要 {names}）"
+        return False, f"缺少人像抠图模型，当前资源目录需包含：{names}"
 
     missing_mtcnn = [
         path for path in _mtcnn_weight_paths().values() if not os.path.isfile(path)
     ]
     if missing_mtcnn:
-        return False, "缺少 MTCNN 模型文件，请准备项目 resources/id_photo/mtcnn 目录中的 pnet.onnx、rnet.onnx、onet.onnx"
+        return False, "当前资源目录缺少 MTCNN 模型文件：pnet.onnx、rnet.onnx、onet.onnx"
 
     try:
         import mtcnnruntime  # noqa: F401
         import onnxruntime  # noqa: F401
-    except ImportError as exc:
-        return False, f"证件照运行依赖不可用: {exc.name or 'onnxruntime/mtcnn-runtime'}"
+    except (ImportError, OSError) as exc:
+        dependency = getattr(exc, "name", None) or type(exc).__name__
+        return False, f"证件照运行依赖不可用: {dependency}"
 
     return True, ""
+
+
+def _managed_model_directory() -> str | None:
+    """只允许删除默认用户数据目录中的证件照模型资源。"""
+    data_root = Path(settings.data_root).resolve()
+    expected = Path(os.path.abspath(data_root / "resources" / "id_photo"))
+    configured = Path(_model_directory())
+    if configured != expected or expected.is_symlink():
+        return None
+
+    resolved = expected.resolve()
+    if resolved == data_root or not resolved.is_relative_to(data_root):
+        return None
+    return str(resolved)
+
+
+def _photo_delete_state() -> tuple[bool, str | None]:
+    model_dir = _managed_model_directory()
+    if model_dir is None:
+        return False, "模型位于应用内置或自定义目录，不能从设置中删除"
+    if not os.path.isdir(model_dir):
+        return False, "没有可删除的用户数据模型"
+    with _MODEL_USE_CONDITION:
+        if _ACTIVE_MODEL_USES or _MODEL_DELETE_IN_PROGRESS:
+            return False, "证件照正在处理中，暂不能删除模型"
+    return True, None
+
+
+def get_model_management_status() -> dict[str, object]:
+    """返回设置页所需的证件照资源位置、状态和删除边界。"""
+    available, reason = get_model_status()
+    model_dir = Path(_model_directory())
+    model_files_ready = _find_matte_model() is not None and all(
+        os.path.isfile(path) for path in _mtcnn_weight_paths().values()
+    )
+    if available:
+        status = "ready"
+        stage = "证件照模型已就绪"
+    elif not model_dir.is_dir():
+        status = "not_downloaded"
+        stage = "证件照模型未准备"
+    elif not model_files_ready:
+        status = "incomplete"
+        stage = "证件照模型文件不完整"
+    else:
+        status = "unavailable"
+        stage = "证件照运行依赖不可用"
+
+    if _managed_model_directory() is not None:
+        source = "用户数据目录"
+    elif settings.ID_PHOTO_MODEL_PATH:
+        source = "自定义路径"
+    else:
+        bundled_dir = Path(
+            os.path.abspath(Path(settings.ROOT_PATH) / "resources" / "id_photo")
+        )
+        source = "应用内置资源" if model_dir == bundled_dir else "其他本地路径"
+
+    can_delete, delete_reason = _photo_delete_state()
+    return {
+        "model_id": "id-photo",
+        "name": "证件照模型",
+        "description": "本地人脸检测与人像抠图模型",
+        "source": source,
+        "path": str(model_dir),
+        "approx_size_bytes": None,
+        "status": status,
+        "progress": None,
+        "stage": stage,
+        "error": reason or None,
+        "job_id": None,
+        "can_delete": can_delete,
+        "delete_reason": delete_reason,
+    }
+
+
+def delete_id_photo_model() -> dict[str, object]:
+    """删除用户数据目录中的证件照模型，并释放已加载的会话。"""
+    global _MATTE_SESSION, _MATTE_SESSION_PATH, _MTCNN_INSTANCE
+    global _MODEL_DELETE_IN_PROGRESS
+
+    model_dir = _managed_model_directory()
+    if model_dir is None:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "证件照模型不在受管理的用户数据目录中，不能删除")
+
+    with _MODEL_USE_CONDITION:
+        if _MODEL_DELETE_IN_PROGRESS or _ACTIVE_MODEL_USES:
+            raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "证件照正在处理中，暂不能删除模型")
+        if not os.path.isdir(model_dir):
+            raise ServiceException(ErrorCode.DATA_NOT_FOUND, "没有可删除的用户数据模型")
+        _MODEL_DELETE_IN_PROGRESS = True
+
+    try:
+        with _MATTE_LOCK:
+            _MATTE_SESSION = None
+            _MATTE_SESSION_PATH = None
+        with _MTCNN_LOCK:
+            _MTCNN_INSTANCE = None
+        shutil.rmtree(model_dir)
+    except OSError as exc:
+        raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "删除证件照模型资源失败") from exc
+    finally:
+        with _MODEL_USE_CONDITION:
+            _MODEL_DELETE_IN_PROGRESS = False
+            _MODEL_USE_CONDITION.notify_all()
+
+    return get_model_management_status()
+
+
+def _guard_model_use(function: Callable[P, R]) -> Callable[P, R]:
+    """登记整个人像处理过程，防止清理时模型仍被使用。"""
+    @wraps(function)
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        global _ACTIVE_MODEL_USES
+        with _MODEL_USE_CONDITION:
+            if _MODEL_DELETE_IN_PROGRESS:
+                raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "证件照模型正在删除，请稍后重试")
+            _ACTIVE_MODEL_USES += 1
+        try:
+            return function(*args, **kwargs)
+        finally:
+            with _MODEL_USE_CONDITION:
+                _ACTIVE_MODEL_USES = max(0, _ACTIVE_MODEL_USES - 1)
+                _MODEL_USE_CONDITION.notify_all()
+
+    return wrapped
 
 
 def _get_matting_session(model_path: str):
@@ -223,7 +359,7 @@ def _get_matting_session(model_path: str):
 
 
 def _get_mtcnn():
-    """初始化 MTCNN，并把其权重路径重定向到项目 resources 目录。"""
+    """初始化 MTCNN，并把其权重路径重定向到当前模型资源目录。"""
     global _MTCNN_INSTANCE
 
     with _MTCNN_LOCK:
@@ -247,7 +383,7 @@ def _get_mtcnn():
         except Exception as exc:
             raise ServiceException(
                 ErrorCode.AI_SERVICE_ERROR,
-                "MTCNN 人脸检测模型加载失败，请检查项目内模型文件",
+                "MTCNN 人脸检测模型加载失败，请检查当前模型资源文件",
             ) from exc
 
 
@@ -898,6 +1034,7 @@ def _render_task(
     )
 
 
+@_guard_model_use
 def process_id_photo(
     file: UploadFile,
     template_id: str,

@@ -1,3 +1,4 @@
+<!-- 思维导图节点：渲染节点内容及收缩、展开和添加子节点操作。 -->
 <script setup lang="ts">
 import { computed } from 'vue'
 import {
@@ -20,6 +21,7 @@ interface Props {
   direction: 'left' | 'right' | 'both'
   readonly?: boolean
   selected?: boolean
+  dragging?: boolean
   editing?: boolean
   editText?: string
   dropTarget?: boolean
@@ -30,6 +32,7 @@ const props = withDefaults(defineProps<Props>(), {
   dimmed: false,
   readonly: false,
   selected: false,
+  dragging: false,
   editing: false,
   editText: '',
   dropTarget: false,
@@ -138,6 +141,7 @@ const nodeClass = computed(() => [
   isLevel1.value ? 'mindmap-node-level1' : '',
   props.dimmed ? 'mindmap-node-filter-dimmed' : '',
   props.selected ? 'mindmap-node-selected' : '',
+  props.dragging ? 'mindmap-node-dragging' : '',
   props.dropTarget ? 'mindmap-node-drop-target' : '',
   props.editing ? 'mindmap-node-editing' : '',
   props.node.placeholder ? 'mindmap-node-placeholder' : '',
@@ -200,6 +204,9 @@ const foldX = computed(() => {
   if (isRoot.value) return props.direction === 'left' ? -offset : offset
   return props.node.side === 'left' ? -offset : offset
 })
+
+// 创建按钮与折叠按钮保持独立命中区域，避免 SVG 控件互相遮挡。
+const addButtonOffset = computed(() => props.node.width / 2 + 40)
 
 function toggleFold(event: MouseEvent | KeyboardEvent) {
   event.stopPropagation()
@@ -354,9 +361,9 @@ function handleFoldKeydown(event: KeyboardEvent) {
         @mousedown.stop
         @click.stop="emit('addChild', { event: $event, side: 'right' })"
       >
-        <circle :cx="node.width / 2 + 18" cy="0" r="11" :fill="theme.addBtn.fill" />
-        <line :x1="node.width / 2 + 14" y1="0" :x2="node.width / 2 + 22" y2="0" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
-        <line :x1="node.width / 2 + 18" y1="-4" :x2="node.width / 2 + 18" y2="4" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
+        <circle :cx="addButtonOffset" cy="0" r="11" :fill="theme.addBtn.fill" />
+        <line :x1="addButtonOffset - 4" y1="0" :x2="addButtonOffset + 4" y2="0" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
+        <line :x1="addButtonOffset" y1="-4" :x2="addButtonOffset" y2="4" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
       </g>
       <g
         v-if="isRoot && (direction === 'left' || direction === 'both')"
@@ -365,9 +372,9 @@ function handleFoldKeydown(event: KeyboardEvent) {
         @mousedown.stop
         @click.stop="emit('addChild', { event: $event, side: 'left' })"
       >
-        <circle :cx="-(node.width / 2 + 18)" cy="0" r="11" :fill="theme.addBtn.fill" />
-        <line :x1="-(node.width / 2 + 22)" y1="0" :x2="-(node.width / 2 + 14)" y2="0" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
-        <line :x1="-(node.width / 2 + 18)" y1="-4" :x2="-(node.width / 2 + 18)" y2="4" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
+        <circle :cx="-addButtonOffset" cy="0" r="11" :fill="theme.addBtn.fill" />
+        <line :x1="-addButtonOffset - 4" y1="0" :x2="-addButtonOffset + 4" y2="0" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
+        <line :x1="-addButtonOffset" y1="-4" :x2="-addButtonOffset" y2="4" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
       </g>
       <g
         v-if="!isRoot"
@@ -376,9 +383,9 @@ function handleFoldKeydown(event: KeyboardEvent) {
         @mousedown.stop
         @click.stop="emit('addChild', { event: $event })"
       >
-        <circle :cx="node.side === 'left' ? -(node.width / 2 + 18) : node.width / 2 + 18" cy="0" r="11" :fill="theme.addBtn.fill" />
-        <line :x1="(node.side === 'left' ? -(node.width / 2 + 22) : node.width / 2 + 14)" y1="0" :x2="(node.side === 'left' ? -(node.width / 2 + 14) : node.width / 2 + 22)" y2="0" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
-        <line :x1="node.side === 'left' ? -(node.width / 2 + 18) : node.width / 2 + 18" y1="-4" :x2="node.side === 'left' ? -(node.width / 2 + 18) : node.width / 2 + 18" y2="4" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
+        <circle :cx="node.side === 'left' ? -addButtonOffset : addButtonOffset" cy="0" r="11" :fill="theme.addBtn.fill" />
+        <line :x1="node.side === 'left' ? -addButtonOffset - 4 : addButtonOffset - 4" y1="0" :x2="node.side === 'left' ? -addButtonOffset + 4 : addButtonOffset + 4" y2="0" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
+        <line :x1="node.side === 'left' ? -addButtonOffset : addButtonOffset" y1="-4" :x2="node.side === 'left' ? -addButtonOffset : addButtonOffset" y2="4" :stroke="theme.addBtn.iconColor" stroke-width="2" stroke-linecap="round" />
       </g>
     </template>
   </g>

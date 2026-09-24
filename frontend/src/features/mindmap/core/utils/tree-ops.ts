@@ -1,3 +1,4 @@
+/** 思维导图树操作：提供节点增删、移动、排序和 ID 处理。 */
 import type { MindMapData } from '../types'
 
 export function generateId(): string {
@@ -263,6 +264,54 @@ export function swapSiblingsMulti(
     return next
   }
   return roots.map((root) => swapSiblings(root, id1, id2))
+}
+
+function moveSibling(
+  node: MindMapData,
+  sourceId: string,
+  targetId: string,
+  placement: 'before' | 'after',
+): MindMapData {
+  if (!node.children) return node
+
+  const sourceIndex = node.children.findIndex((child) => child.id === sourceId)
+  const targetIndex = node.children.findIndex((child) => child.id === targetId)
+  if (sourceIndex !== -1 && targetIndex !== -1) {
+    const children = [...node.children]
+    const [source] = children.splice(sourceIndex, 1)
+    const nextTargetIndex = children.findIndex((child) => child.id === targetId)
+    if (!source || nextTargetIndex === -1) return node
+    children.splice(placement === 'before' ? nextTargetIndex : nextTargetIndex + 1, 0, source)
+    return { ...node, children }
+  }
+
+  return {
+    ...node,
+    children: node.children.map((child) => moveSibling(child, sourceId, targetId, placement)),
+  }
+}
+
+/** 将节点移动到同级目标节点前后，同时保留完整子树。 */
+export function moveSiblingMulti(
+  roots: MindMapData[],
+  sourceId: string,
+  targetId: string,
+  placement: 'before' | 'after',
+): MindMapData[] {
+  if (sourceId === targetId) return roots
+
+  const sourceRootIndex = roots.findIndex((root) => root.id === sourceId)
+  const targetRootIndex = roots.findIndex((root) => root.id === targetId)
+  if (sourceRootIndex !== -1 && targetRootIndex !== -1) {
+    const next = [...roots]
+    const [source] = next.splice(sourceRootIndex, 1)
+    const nextTargetIndex = next.findIndex((root) => root.id === targetId)
+    if (!source || nextTargetIndex === -1) return roots
+    next.splice(placement === 'before' ? nextTargetIndex : nextTargetIndex + 1, 0, source)
+    return next
+  }
+
+  return roots.map((root) => moveSibling(root, sourceId, targetId, placement))
 }
 
 export function findSubtreeMulti(

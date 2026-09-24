@@ -1,3 +1,4 @@
+<!-- 思维导图查看器：维护节点布局、视口交互和导出状态。 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import MindMapCanvas from './MindMapCanvas.vue'
@@ -27,7 +28,7 @@ import {
   regenerateIds,
   removeNodeMulti,
   subscribeFormulaEngine,
-  swapSiblingsMulti,
+  moveSiblingMulti,
   toMarkdownMultiRoot,
   updateNodeFieldsMulti,
 } from '../core'
@@ -53,6 +54,48 @@ interface Props {
   plugins?: MindMapPlugin[]
   activeTags?: string[]
   readonly?: boolean
+}
+
+interface DragReorderIntent {
+  type: 'reorder'
+  targetId: string
+  placement: 'before' | 'after'
+}
+
+interface DragSideIntent {
+  type: 'side'
+  rootId: string
+  side: 'left' | 'right'
+  y: number
+}
+
+type DragDropIntent =
+  | { type: 'reparent'; targetId: string }
+  | DragReorderIntent
+  | DragSideIntent
+
+interface NodeDragState {
+  pointerId: number
+  nodeId: string
+  startX: number
+  startY: number
+  moved: boolean
+  historySnapshot: MindMapHistorySnapshot
+  changed: boolean
+  lastMoveTarget: string | null
+}
+
+interface MapDataUpdateOptions {
+  recordHistory?: boolean
+  publish?: boolean
+  emitEvent?: boolean
+}
+
+interface DropIndicator {
+  x: number
+  y: number
+  width: number
+  color: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -86,19 +129,11 @@ const editingNodeId = ref<string | null>(null)
 const editText = ref('')
 const historyPast = ref<MindMapHistorySnapshot[]>([])
 const historyFuture = ref<MindMapHistorySnapshot[]>([])
-const dropTargetId = ref<string | null>(null)
+const dragIntent = ref<DragDropIntent | null>(null)
 const contextMenu = ref<{ x: number; y: number; nodeId: string | null } | null>(null)
 const clipboardNode = shallowRef<MindMapData | null>(null)
 const exportError = ref<string | null>(null)
-const nodeDrag = ref<{
-  pointerId: number
-  nodeId: string
-  startX: number
-  startY: number
-  moved: boolean
-  lastSwapAt: number
-  lastSwapTarget: string | null
-} | null>(null)
+const nodeDrag = ref<NodeDragState | null>(null)
 const pan = ref({ x: 0, y: 0 })
 const zoom = ref(1)
 const initialReady = ref(false)
@@ -147,6 +182,37 @@ const nodeMap = computed<Record<string, LayoutNode>>(() => {
   const result: Record<string, LayoutNode> = {}
   for (const node of nodes.value) result[node.id] = node
   return result
+})
+const dropTargetId = computed(() => (
+  dragIntent.value?.type === 'reparent' ? dragIntent.value.targetId : null
+))
+const dropIndicator = computed<DropIndicator | null>(() => {
+  const intent = dragIntent.value
+  if (!intent) return null
+
+  if (intent.type === 'reorder') {
+    const target = nodeMap.value[intent.targetId]
+    if (!target) return null
+    return {
+      x: target.x,
+      y: target.y + (intent.placement === 'before' ? -target.height / 2 - 8 : target.height / 2 + 8),
+      width: target.width + 20,
+      color: target.color,
+    }
+  }
+
+  if (intent.type === 'side') {
+    const root = nodeMap.value[intent.rootId]
+    if (!root) return null
+    return {
+      x: root.x + (intent.side === 'left' ? -(root.width / 2 + 24) : root.width / 2 + 24),
+      y: intent.y,
+      width: 34,
+      color: root.color,
+    }
+  }
+
+  return null
 })
 const dimmedNodes = computed(() => {
   const result = new Set<string>()
@@ -215,13 +281,18 @@ function publishDataChange() {
   emit('dataChange', cloneMindMapData(mapData.value))
 }
 
-function updateMapData(nextData: MindMapData[], event?: MindMapEvent) {
-  if (JSON.stringify(nextData) === JSON.stringify(mapData.value)) return
-  recordHistory()
+function updateMapData(
+  nextData: MindMapData[],
+  event?: MindMapEvent,
+  options: MapDataUpdateOptions = {},
+): boolean {
+  if (JSON.stringify(nextData) === JSON.stringify(mapData.value)) return false
+  if (options.recordHistory !== false) recordHistory()
   mapData.value = nextData
-  publishDataChange()
-  if (event) emit('event', event)
-  publishMarkdown()
+  if (options.publish !== false) publishDataChange()
+  if (event && options.emitEvent !== false) emit('event', event)
+  if (options.publish !== false) publishMarkdown()
+  return true
 }
 
 function applyHistorySnapshot(snapshot: MindMapHistorySnapshot) {
@@ -591,6 +662,12 @@ function handleKeydown(event: KeyboardEvent) {
     return
   }
 
+  if (nodeDrag.value && event.key === 'Escape') {
+    event.preventDefault()
+    cancelNodeDrag()
+    return
+  }
+
   const isMeta = event.metaKey || event.ctrlKey
   if (isMeta && event.key.toLowerCase() === 'z' && !event.shiftKey && !props.readonly) {
     event.preventDefault()
@@ -735,6 +812,69 @@ function findDropTarget(clientX: number, clientY: number, sourceId: string): str
   })?.id ?? null
 }
 
+function findReorderIntent(
+  clientX: number,
+  clientY: number,
+  sourceId: string,
+): DragReorderIntent | null {
+  const position = clientToMapPosition(clientX, clientY)
+  const source = nodeMap.value[sourceId]
+  if (!position || !source) return null
+
+  const siblings = nodes.value.filter((node) =>
+    node.id !== sourceId &&
+    node.parentId === source.parentId &&
+    node.side === source.side,
+  )
+  if (siblings.length === 0) return null
+
+  const [firstSibling, ...remainingSiblings] = siblings
+  if (!firstSibling) return null
+  const target = remainingSiblings.reduce(
+    (closest, node) => Math.abs(position.y - node.y) < Math.abs(position.y - closest.y) ? node : closest,
+    firstSibling,
+  )
+  if (Math.abs(position.y - target.y) > Math.max(source.height, target.height) * 0.9) return null
+
+  return {
+    type: 'reorder',
+    targetId: target.id,
+    placement: position.y < target.y ? 'before' : 'after',
+  }
+}
+
+function findSideIntent(clientX: number, clientY: number, sourceId: string): DragSideIntent | null {
+  const position = clientToMapPosition(clientX, clientY)
+  const source = nodeMap.value[sourceId]
+  if (!position || !source || direction.value !== 'both' || source.depth !== 1 || !source.parentId) return null
+
+  const side = source.side === 'right' && position.x < 0
+    ? 'left'
+    : source.side === 'left' && position.x > 0
+      ? 'right'
+      : null
+  if (!side) return null
+
+  const root = mapData.value.find((item) => item.id === source.parentId)
+  return root ? { type: 'side', rootId: root.id, side, y: position.y } : null
+}
+
+function updateDragIntent(clientX: number, clientY: number, sourceId: string) {
+  const targetId = findDropTarget(clientX, clientY, sourceId)
+  if (targetId) {
+    dragIntent.value = { type: 'reparent', targetId }
+    return
+  }
+
+  const sideIntent = findSideIntent(clientX, clientY, sourceId)
+  if (sideIntent) {
+    dragIntent.value = sideIntent
+    return
+  }
+
+  dragIntent.value = findReorderIntent(clientX, clientY, sourceId)
+}
+
 function handleNodePointerDown(event: PointerEvent, nodeId: string) {
   if (props.readonly || event.button !== 0 || editingNodeId.value) return
   event.stopPropagation()
@@ -745,10 +885,11 @@ function handleNodePointerDown(event: PointerEvent, nodeId: string) {
     startX: event.clientX,
     startY: event.clientY,
     moved: false,
-    lastSwapAt: 0,
-    lastSwapTarget: null,
+    historySnapshot: cloneHistorySnapshot(makeHistorySnapshot()),
+    changed: false,
+    lastMoveTarget: null,
   }
-  dropTargetId.value = null
+  dragIntent.value = null
   svgRef.value?.setPointerCapture(event.pointerId)
 }
 
@@ -770,57 +911,59 @@ function handlePointerDown(event: PointerEvent) {
   svg.setPointerCapture(event.pointerId)
 }
 
-function handleDragReorder(drag: NonNullable<typeof nodeDrag.value>, clientX: number, clientY: number) {
-  const position = clientToMapPosition(clientX, clientY)
-  const draggedNode = nodeMap.value[drag.nodeId]
-  if (!position || !draggedNode) return
+function applyDragMapData(nextData: MindMapData[], targetId: string): boolean {
+  const changed = updateMapData(
+    nextData,
+    undefined,
+    { recordHistory: false, publish: false, emitEvent: false },
+  )
+  if (!changed) return false
 
-  if (draggedNode.parentId && draggedNode.depth === 1 && direction.value === 'both') {
-    const currentSide = draggedNode.side
-    const crossedToLeft = currentSide === 'right' && position.x < 0
-    const crossedToRight = currentSide === 'left' && position.x > 0
-    if (crossedToLeft || crossedToRight) {
-      const targetSide = crossedToLeft ? 'left' : 'right'
-      const root = mapData.value.find((item) => item.id === draggedNode.parentId)
-      if (root) {
-        const splitIndex = splitIndices.value[root.id] ?? Math.ceil((root.children?.length ?? 0) / 2)
-        const result = moveChildToSide(root, drag.nodeId, targetSide, splitIndex)
-        if (result) {
-          updateMapData(
-            mapData.value.map((item) => item.id === root.id ? result.data : item),
-            { type: 'nodeMove', nodeId: drag.nodeId, targetId: root.id },
-          )
-          splitIndices.value = { ...splitIndices.value, [root.id]: result.newSplitIndex }
-          nodeDrag.value = { ...drag, lastSwapAt: Date.now(), lastSwapTarget: null }
-          dropTargetId.value = null
-          return
-        }
-      }
+  const drag = nodeDrag.value
+  if (drag) {
+    nodeDrag.value = {
+      ...drag,
+      changed: true,
+      lastMoveTarget: targetId,
     }
   }
+  return true
+}
 
-  const siblings = nodes.value.filter((node) =>
-    node.id !== drag.nodeId &&
-    node.parentId === draggedNode.parentId &&
-    node.side === draggedNode.side,
-  )
-  const sibling = siblings.find((node) =>
-    Math.abs(position.y - node.y) < Math.max(draggedNode.height, node.height) * 0.6,
-  )
-  if (!sibling) {
-    if (drag.lastSwapTarget !== null) {
-      nodeDrag.value = { ...drag, lastSwapTarget: null }
-    }
-    return
-  }
+function commitNodeDrag(drag: NodeDragState) {
+  if (!drag.changed || !drag.lastMoveTarget) return
 
-  const now = Date.now()
-  if (sibling.id === drag.lastSwapTarget || now - drag.lastSwapAt < 350) return
-  updateMapData(
-    swapSiblingsMulti(mapData.value, drag.nodeId, sibling.id),
-    { type: 'nodeMove', nodeId: drag.nodeId, targetId: sibling.id },
-  )
-  nodeDrag.value = { ...drag, lastSwapAt: now, lastSwapTarget: sibling.id }
+  historyPast.value = pushHistorySnapshot(historyPast.value, drag.historySnapshot)
+  historyFuture.value = []
+  emit('event', {
+    type: 'historyChange',
+    canUndo: historyPast.value.length > 0,
+    canRedo: false,
+  })
+  publishDataChange()
+  emit('event', {
+    type: 'nodeMove',
+    nodeId: drag.nodeId,
+    targetId: drag.lastMoveTarget,
+  })
+  publishMarkdown()
+}
+
+function releasePointer(pointerId: number) {
+  const svg = svgRef.value
+  if (svg?.hasPointerCapture(pointerId)) svg.releasePointerCapture(pointerId)
+}
+
+function cancelNodeDrag() {
+  const drag = nodeDrag.value
+  if (!drag) return
+
+  releasePointer(drag.pointerId)
+  mapData.value = cloneMindMapData(drag.historySnapshot.mapData)
+  splitIndices.value = { ...drag.historySnapshot.splitIndices }
+  selectedNodeId.value = drag.historySnapshot.selectedNodeId
+  nodeDrag.value = null
+  dragIntent.value = null
 }
 
 function handlePointerMove(event: PointerEvent) {
@@ -828,9 +971,9 @@ function handlePointerMove(event: PointerEvent) {
     const drag = nodeDrag.value
     if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return
     if (!drag.moved) nodeDrag.value = { ...drag, moved: true }
-    const activeDrag = nodeDrag.value ?? { ...drag, moved: true }
-    dropTargetId.value = findDropTarget(event.clientX, event.clientY, activeDrag.nodeId)
-    if (!dropTargetId.value) handleDragReorder(activeDrag, event.clientX, event.clientY)
+    const activeDrag = nodeDrag.value
+    if (!activeDrag) return
+    updateDragIntent(event.clientX, event.clientY, activeDrag.nodeId)
     return
   }
 
@@ -844,25 +987,59 @@ function handlePointerMove(event: PointerEvent) {
 function handlePointerUp(event: PointerEvent) {
   if (nodeDrag.value?.pointerId === event.pointerId) {
     const drag = nodeDrag.value
-    const targetId = dropTargetId.value
-    svgRef.value?.releasePointerCapture(event.pointerId)
-    nodeDrag.value = null
-    dropTargetId.value = null
+    const intent = dragIntent.value
 
-    if (drag.moved && targetId) {
-      const nextData = moveNodeMulti(mapData.value, drag.nodeId, targetId)
-      if (nextData) {
-        updateMapData(nextData, { type: 'nodeMove', nodeId: drag.nodeId, targetId })
-        splitIndices.value = {}
+    if (drag.moved && intent) {
+      if (intent.type === 'reparent') {
+        const nextData = moveNodeMulti(mapData.value, drag.nodeId, intent.targetId)
+        if (nextData && applyDragMapData(nextData, intent.targetId)) {
+          splitIndices.value = {}
+        }
+      } else if (intent.type === 'reorder') {
+        applyDragMapData(
+          moveSiblingMulti(mapData.value, drag.nodeId, intent.targetId, intent.placement),
+          intent.targetId,
+        )
+      } else {
+        const root = mapData.value.find((item) => item.id === intent.rootId)
+        if (root) {
+          const splitIndex = splitIndices.value[root.id] ?? Math.ceil((root.children?.length ?? 0) / 2)
+          const result = moveChildToSide(root, drag.nodeId, intent.side, splitIndex)
+          if (result && applyDragMapData(
+            mapData.value.map((item) => item.id === root.id ? result.data : item),
+            root.id,
+          )) {
+            splitIndices.value = { ...splitIndices.value, [root.id]: result.newSplitIndex }
+          }
+        }
       }
     }
+
+    const completedDrag = nodeDrag.value ?? drag
+    releasePointer(event.pointerId)
+    nodeDrag.value = null
+    dragIntent.value = null
+    commitNodeDrag(completedDrag)
     return
   }
 
   if (!panStart || panStart.pointerId !== event.pointerId) return
-  svgRef.value?.releasePointerCapture(event.pointerId)
+  releasePointer(event.pointerId)
   panStart = null
   isPanning.value = false
+}
+
+function handlePointerCancel(event: PointerEvent) {
+  if (nodeDrag.value?.pointerId === event.pointerId) {
+    cancelNodeDrag()
+    return
+  }
+  handlePointerUp(event)
+}
+
+function handlePointerLeave(event: PointerEvent) {
+  if (nodeDrag.value?.pointerId === event.pointerId) return
+  handlePointerUp(event)
 }
 
 function setDirection(nextDirection: LayoutDirection) {
@@ -879,7 +1056,7 @@ function handleFoldToggle(nodeId: string) {
   if (!props.readonly) recordHistory()
   foldOverrides.value = { ...foldOverrides.value, [nodeId]: expanded }
   emit('event', { type: expanded ? 'nodeExpand' : 'nodeCollapse', nodeId })
-  void nextTick(fitView)
+  // 折叠或展开只更新布局，保留用户当前的缩放和拖拽位置。
 }
 
 function handleSystemTheme(event: MediaQueryListEvent) {
@@ -978,7 +1155,6 @@ function setNodeExpanded(nodeId: string, expanded: boolean) {
   recordHistory()
   foldOverrides.value = { ...foldOverrides.value, [nodeId]: expanded }
   emit('event', { type: expanded ? 'nodeExpand' : 'nodeCollapse', nodeId })
-  void nextTick(fitView)
 }
 
 watch(() => props.data, applyInput, { deep: true })
@@ -1002,6 +1178,8 @@ watch(activeTags, (tags) => {
 watch(formulasEnabled, refreshFormulaEngine)
 watch(() => nodes.value, () => {
   void nextTick(() => {
+    // 仅首次渲染自动适配，节点增删后保留用户当前的缩放和拖拽位置。
+    if (initialReady.value) return
     fitView()
     initialReady.value = true
   })
@@ -1072,8 +1250,8 @@ defineExpose({
       @pointerdown="handlePointerDown"
       @pointermove="handlePointerMove"
       @pointerup="handlePointerUp"
-      @pointercancel="handlePointerUp"
-      @pointerleave="handlePointerUp"
+      @pointercancel="handlePointerCancel"
+      @pointerleave="handlePointerLeave"
       @wheel.prevent="handleWheel"
       @click="closeContextMenu"
       @contextmenu="handleCanvasContextMenu"
@@ -1090,6 +1268,8 @@ defineExpose({
         :zoom="zoom"
         :initial-ready="initialReady"
         :dragging-canvas="isPanning"
+        :dragging-node-id="nodeDrag ? nodeDrag.nodeId : null"
+        :drop-indicator="dropIndicator"
         :dimmed-nodes="dimmedNodes"
         :readonly="readonly"
         :selected-node-id="selectedNodeId"

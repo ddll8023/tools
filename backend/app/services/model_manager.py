@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -56,6 +57,9 @@ class _DownloadJob:
 
 _DOWNLOAD_LOCK = threading.RLock()
 _ACTIVE_JOB: _DownloadJob | None = None
+_MODEL_USE_CONDITION = threading.Condition()
+_ACTIVE_MODEL_USES = 0
+_MODEL_DELETE_IN_PROGRESS = False
 
 
 def _model_cache_dir() -> Path:
@@ -64,6 +68,37 @@ def _model_cache_dir() -> Path:
 
 def _state_path() -> Path:
     return _model_cache_dir() / _MODEL_STATE_FILENAME
+
+
+def _managed_model_cache_dir() -> Path | None:
+    """只允许删除默认用户数据目录内的 MinerU 缓存。"""
+    data_root = Path(settings.data_root).resolve()
+    expected = Path(os.path.abspath(data_root / "resources" / "mineru"))
+    configured = Path(os.path.abspath(settings.mineru_model_path))
+    if configured != expected or expected.is_symlink():
+        return None
+
+    resolved = expected.resolve()
+    if resolved == data_root or not resolved.is_relative_to(data_root):
+        return None
+    return resolved
+
+
+def acquire_mineru_model_use() -> None:
+    """为排队或执行中的深度解析登记模型占用，阻止并发删除。"""
+    global _ACTIVE_MODEL_USES
+    with _MODEL_USE_CONDITION:
+        if _MODEL_DELETE_IN_PROGRESS:
+            raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "MinerU 模型正在删除，请稍后重试")
+        _ACTIVE_MODEL_USES += 1
+
+
+def release_mineru_model_use() -> None:
+    """释放深度解析对 MinerU 模型的占用。"""
+    global _ACTIVE_MODEL_USES
+    with _MODEL_USE_CONDITION:
+        _ACTIVE_MODEL_USES = max(0, _ACTIVE_MODEL_USES - 1)
+        _MODEL_USE_CONDITION.notify_all()
 
 
 def _write_state_locked(job: _DownloadJob) -> None:
@@ -169,6 +204,8 @@ def _model_payload(
         "stage": stage,
         "error": error,
         "job_id": job_id,
+        "can_delete": False,
+        "delete_reason": "正在下载模型",
     }
 
 
@@ -182,47 +219,77 @@ def _payload_from_job(job: _DownloadJob) -> dict[str, object]:
     )
 
 
+def _attach_delete_state(payload: dict[str, object]) -> dict[str, object]:
+    """将当前下载、解析占用和存储边界反映到删除权限中。"""
+    cache_dir = _managed_model_cache_dir()
+    if cache_dir is None:
+        payload["can_delete"] = False
+        payload["delete_reason"] = "模型路径不在受管理的用户数据目录中"
+        return payload
+
+    with _DOWNLOAD_LOCK:
+        downloading = _ACTIVE_JOB is not None and _ACTIVE_JOB.status == "downloading"
+    with _MODEL_USE_CONDITION:
+        model_in_use = _ACTIVE_MODEL_USES > 0 or _MODEL_DELETE_IN_PROGRESS
+
+    if downloading:
+        payload["can_delete"] = False
+        payload["delete_reason"] = "模型下载中，暂不能删除"
+    elif model_in_use:
+        payload["can_delete"] = False
+        payload["delete_reason"] = "PDF 深度解析排队或处理中，暂不能删除"
+    elif not cache_dir.exists():
+        payload["can_delete"] = False
+        payload["delete_reason"] = "没有可删除的模型缓存"
+    else:
+        payload["can_delete"] = True
+        payload["delete_reason"] = None
+    return payload
+
+
 def get_mineru_model_status() -> dict[str, object]:
     """获取模型状态；软件重启后不会把未恢复的下载误报为进行中。"""
     with _DOWNLOAD_LOCK:
-        if _ACTIVE_JOB is not None:
-            return _payload_from_job(_ACTIVE_JOB)
+        active_job = _ACTIVE_JOB
+    if active_job is not None:
+        return _payload_from_job(active_job)
 
     if _model_cache_ready():
-        return _model_payload(
+        payload = _model_payload(
             status="ready",
             progress=100,
             stage="模型已就绪",
             error=None,
             job_id=None,
         )
-
-    state = _read_state() or {}
-    state_status = state.get("status")
-    if state_status == "downloading":
-        return _model_payload(
-            status="interrupted",
-            progress=state.get("progress") if isinstance(state.get("progress"), int) else None,
-            stage="上次下载未完成，请继续下载",
-            error="上次下载已中断",
-            job_id=state.get("job_id") if isinstance(state.get("job_id"), str) else None,
-        )
-    if state_status in {"failed", "cancelled"}:
-        return _model_payload(
-            status=state_status,
-            progress=state.get("progress") if isinstance(state.get("progress"), int) else None,
-            stage=str(state.get("stage") or "模型未就绪"),
-            error=str(state.get("error")) if state.get("error") else None,
-            job_id=state.get("job_id") if isinstance(state.get("job_id"), str) else None,
-        )
-
-    return _model_payload(
-        status="not_downloaded",
-        progress=None,
-        stage="尚未下载模型",
-        error=None,
-        job_id=None,
-    )
+    else:
+        state = _read_state() or {}
+        state_status = state.get("status")
+        if state_status == "downloading":
+            payload = _model_payload(
+                status="interrupted",
+                progress=state.get("progress") if isinstance(state.get("progress"), int) else None,
+                stage="上次下载未完成，请继续下载",
+                error="上次下载已中断",
+                job_id=state.get("job_id") if isinstance(state.get("job_id"), str) else None,
+            )
+        elif state_status in {"failed", "cancelled"}:
+            payload = _model_payload(
+                status=str(state_status),
+                progress=state.get("progress") if isinstance(state.get("progress"), int) else None,
+                stage=str(state.get("stage") or "模型未就绪"),
+                error=str(state.get("error")) if state.get("error") else None,
+                job_id=state.get("job_id") if isinstance(state.get("job_id"), str) else None,
+            )
+        else:
+            payload = _model_payload(
+                status="not_downloaded",
+                progress=None,
+                stage="尚未下载模型",
+                error=None,
+                job_id=None,
+            )
+    return _attach_delete_state(payload)
 
 
 def require_mineru_model() -> None:
@@ -244,28 +311,26 @@ def start_mineru_download() -> dict[str, object]:
     """启动或复用唯一的 MinerU 下载任务。"""
     global _ACTIVE_JOB
 
-    with _DOWNLOAD_LOCK:
-        if _ACTIVE_JOB is not None and _ACTIVE_JOB.status == "downloading":
-            return _payload_from_job(_ACTIVE_JOB)
+    with _MODEL_USE_CONDITION:
+        if _MODEL_DELETE_IN_PROGRESS:
+            raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "MinerU 模型正在删除，请稍后重试")
+        with _DOWNLOAD_LOCK:
+            if _ACTIVE_JOB is not None and _ACTIVE_JOB.status == "downloading":
+                return _payload_from_job(_ACTIVE_JOB)
+            if _model_cache_ready():
+                return get_mineru_model_status()
 
-    if _model_cache_ready():
-        return get_mineru_model_status()
-
-    with _DOWNLOAD_LOCK:
-        if _ACTIVE_JOB is not None and _ACTIVE_JOB.status == "downloading":
-            return _payload_from_job(_ACTIVE_JOB)
-
-        job = _DownloadJob(job_id=uuid.uuid4().hex[:12])
-        _ACTIVE_JOB = job
-        _write_state_locked(job)
-        thread = threading.Thread(
-            target=_run_download,
-            args=(job.job_id,),
-            name="mineru-model-download",
-            daemon=True,
-        )
-        thread.start()
-        return _payload_from_job(job)
+            job = _DownloadJob(job_id=uuid.uuid4().hex[:12])
+            _ACTIVE_JOB = job
+            _write_state_locked(job)
+            thread = threading.Thread(
+                target=_run_download,
+                args=(job.job_id,),
+                name="mineru-model-download",
+                daemon=True,
+            )
+            thread.start()
+            return _payload_from_job(job)
 
 
 def cancel_mineru_download() -> dict[str, object]:
@@ -273,13 +338,48 @@ def cancel_mineru_download() -> dict[str, object]:
     with _DOWNLOAD_LOCK:
         job = _ACTIVE_JOB
         if job is None or job.status != "downloading":
-            return get_mineru_model_status()
-        job.cancel_requested = True
-        process = job.process
-        job.stage = "正在取消模型下载..."
-        if process is not None:
-            _kill_process(process)
-        return _payload_from_job(job)
+            should_read_status = True
+        else:
+            should_read_status = False
+            job.cancel_requested = True
+            process = job.process
+            job.stage = "正在取消模型下载..."
+            if process is not None:
+                _kill_process(process)
+            payload = _payload_from_job(job)
+    return get_mineru_model_status() if should_read_status else payload
+
+
+def delete_mineru_model() -> dict[str, object]:
+    """删除受管理的 MinerU 缓存，并阻止下载或解析与删除并发。"""
+    global _MODEL_DELETE_IN_PROGRESS
+    with _MODEL_USE_CONDITION:
+        if _MODEL_DELETE_IN_PROGRESS or _ACTIVE_MODEL_USES:
+            raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "PDF 深度解析排队或处理中，暂不能删除模型")
+        _MODEL_DELETE_IN_PROGRESS = True
+
+    try:
+        with _DOWNLOAD_LOCK:
+            if _ACTIVE_JOB is not None and _ACTIVE_JOB.status == "downloading":
+                raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "模型下载中，暂不能删除")
+            cache_dir = _managed_model_cache_dir()
+            if cache_dir is None:
+                raise ServiceException(ErrorCode.PARAM_ERROR, "模型路径不在受管理的用户数据目录中，不能删除")
+
+            if cache_dir.exists():
+                from app.modules.pdf_to_markdown.deep_service import stop_mineru_executor
+
+                stop_mineru_executor()
+                try:
+                    shutil.rmtree(cache_dir)
+                except OSError as exc:
+                    raise ServiceException(ErrorCode.SERVICE_UNAVAILABLE, "删除 MinerU 模型缓存失败") from exc
+    finally:
+        with _MODEL_USE_CONDITION:
+            _MODEL_DELETE_IN_PROGRESS = False
+            _MODEL_USE_CONDITION.notify_all()
+
+    return get_mineru_model_status()
 
 
 def _update_progress(job_id: str, line: str) -> None:

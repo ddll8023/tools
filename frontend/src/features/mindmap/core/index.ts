@@ -1,3 +1,4 @@
+/** 思维导图核心能力入口：统一导出数据、布局、操作和导出工具。 */
 export type {
   CrossLink,
   Edge,
@@ -68,6 +69,7 @@ export {
   updateNodeFieldsMulti,
   moveNodeMulti,
   swapSiblingsMulti,
+  moveSiblingMulti,
   regenerateIds,
   addChildToSide,
   moveChildToSide,

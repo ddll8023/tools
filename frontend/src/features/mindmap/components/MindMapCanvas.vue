@@ -1,8 +1,16 @@
+<!-- 思维导图画布：渲染连线、节点以及拖拽反馈。 -->
 <script setup lang="ts">
 import MindMapNode from './MindMapNode.vue'
 import type { Edge, LayoutDirection, LayoutNode } from '../core/types'
 import type { MindMapPlugin } from '../core/plugins/types'
 import type { ThemeColors } from '../core/utils/theme'
+
+interface DropIndicator {
+  x: number
+  y: number
+  width: number
+  color: string
+}
 
 interface Props {
   nodes: LayoutNode[]
@@ -15,6 +23,8 @@ interface Props {
   zoom: number
   initialReady: boolean
   draggingCanvas?: boolean
+  draggingNodeId?: string | null
+  dropIndicator?: DropIndicator | null
   dimmedNodes?: ReadonlySet<string>
   readonly?: boolean
   selectedNodeId?: string | null
@@ -26,6 +36,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   plugins: () => [],
   draggingCanvas: false,
+  draggingNodeId: null,
+  dropIndicator: null,
   dimmedNodes: () => new Set<string>(),
 })
 
@@ -118,6 +130,18 @@ function handleAddChild(
       </g>
     </g>
 
+    <line
+      v-if="dropIndicator"
+      class="mindmap-drop-indicator"
+      :x1="dropIndicator.x - dropIndicator.width / 2"
+      :x2="dropIndicator.x + dropIndicator.width / 2"
+      :y1="dropIndicator.y"
+      :y2="dropIndicator.y"
+      :stroke="dropIndicator.color"
+      stroke-width="3"
+      stroke-linecap="round"
+    />
+
     <g class="mindmap-nodes">
       <MindMapNode
         v-for="node in nodes"
@@ -129,6 +153,7 @@ function handleAddChild(
         :dimmed="dimmedNodes.has(node.id)"
         :readonly="readonly"
         :selected="selectedNodeId === node.id"
+        :dragging="draggingNodeId === node.id"
         :editing="editingNodeId === node.id"
         :edit-text="editText"
         :drop-target="dropTargetId === node.id"
