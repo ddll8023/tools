@@ -1,0 +1,39 @@
+from typing import Generic, TypeVar
+from enum import IntEnum
+from pydantic import BaseModel, ConfigDict
+
+T = TypeVar("T")
+
+
+class ErrorCode(IntEnum):
+    SUCCESS = 0
+    PARAM_ERROR = 1001
+    DATA_NOT_FOUND = 1002
+    UNSUPPORTED_FILE_FORMAT = 3001
+    FILE_TOO_LARGE = 3002
+    CONVERSION_FAILED = 3003
+    TIMEOUT = 3004
+    UNSUPPORTED_CONTENT = 3005
+    AI_SERVICE_ERROR = 4001
+    INTERNAL_ERROR = 5001
+    SERVICE_UNAVAILABLE = 5002
+
+
+class ApiResponse(BaseModel, Generic[T]):
+    code: int = 0
+    message: str = "success"
+    data: T | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+def success(data: T | None = None, message: str = "success") -> dict:
+    return {"code": ErrorCode.SUCCESS, "message": message, "data": data}
+
+
+def error(
+    code: int = ErrorCode.INTERNAL_ERROR,
+    message: str = "系统内部错误",
+    data: T | None = None,
+) -> dict:
+    return {"code": code, "message": message, "data": data}
