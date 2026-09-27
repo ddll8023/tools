@@ -24,7 +24,7 @@ export default defineConfig({
       reuseExistingServer: true,
     },
     {
-      command: 'cd ../backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 4740',
+      command: 'cd ../backend && uv run uvicorn toolbox_backend.main:app --app-dir src --host 127.0.0.1 --port 4740',
       url: 'http://127.0.0.1:4740/docs',
       reuseExistingServer: true,
     },

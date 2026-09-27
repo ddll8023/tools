@@ -34,6 +34,7 @@ class ModelStatusItem(BaseModel):
     stage: str
     error: str | None = None
     job_id: str | None = None
+    can_download: bool = False
     can_delete: bool = False
     delete_reason: str | None = None
 

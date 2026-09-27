@@ -41,14 +41,17 @@ const appVersion = window.desktopApi?.versions.app
         <article
           v-for="tool in toolConfigs"
           :key="tool.id"
-          class="flex w-full flex-col rounded-2xl border border-border bg-surface p-7 pb-6 transition-all duration-250"
+          class="flex w-full flex-col rounded-2xl border border-border p-7 pb-6 transition-all duration-250"
           :class="tool.available === false
-            ? 'cursor-default opacity-50 grayscale'
-            : 'cursor-pointer hover:-translate-y-[3px] hover:border-transparent hover:shadow-lg active:translate-y-0 active:shadow-sm'"
+            ? 'cursor-default bg-[#FCFCFB]'
+            : 'cursor-pointer bg-surface hover:-translate-y-[3px] hover:border-transparent hover:shadow-lg active:translate-y-0 active:shadow-sm'"
           @click="navigateTo(tool)"
         >
           <div
-            class="mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-primary-light text-xl text-primary-dark"
+            class="mb-4 flex h-11 w-11 items-center justify-center rounded-lg text-xl transition-colors"
+            :class="tool.available === false
+              ? 'bg-[#F3F3F0] text-[#8C8C86]'
+              : 'bg-primary-light text-primary-dark'"
           >
             <font-awesome-icon :icon="tool.icon" />
           </div>
@@ -57,6 +60,12 @@ const appVersion = window.desktopApi?.versions.app
           </h3>
           <p class="mb-4 text-[13px] leading-relaxed text-text-secondary">
             {{ tool.description }}
+          </p>
+          <p
+            v-if="tool.available === false && tool.unavailableReason"
+            class="mb-4 min-w-0 text-[11px] leading-relaxed text-[#85857F] [overflow-wrap:anywhere]"
+          >
+            {{ tool.unavailableReason }}
           </p>
           <div class="mt-auto flex items-center justify-between">
             <span
@@ -67,12 +76,13 @@ const appVersion = window.desktopApi?.versions.app
             </span>
             <span
               v-else
-              class="rounded-full bg-[#FFF0E0] px-2.5 py-0.5 text-[11px] font-medium text-[#B8860B]"
+              class="rounded-full bg-[#F3F3F0] px-2.5 py-0.5 text-[11px] font-medium text-[#767670]"
             >
-              {{ tool.unavailableReason || '暂不可用' }}
+              暂不可用
             </span>
             <span
-              class="text-sm text-text-tertiary transition-all duration-200"
+              class="text-sm transition-all duration-200"
+              :class="tool.available === false ? 'text-[#B8B8B3]' : 'text-text-tertiary'"
             >
               <font-awesome-icon :icon="['fas', 'arrow-right']" />
             </span>

@@ -44,12 +44,18 @@ def _get_model_status(model_id: str) -> dict[str, object]:
 
 
 def _action_model(model_id: str, action: str) -> dict[str, object]:
-    """仅对 MinerU 执行下载或取消操作。"""
-    if model_id != MINERU_PIPELINE_MODEL_ID:
-        raise ServiceException(ErrorCode.PARAM_ERROR, "该模型不支持此操作")
-    if action == "download":
-        return start_mineru_download()
-    return cancel_mineru_download()
+    """按模型类型分派下载或取消操作。"""
+    if model_id == MINERU_PIPELINE_MODEL_ID:
+        if action == "download":
+            return start_mineru_download()
+        return cancel_mineru_download()
+    if model_id == "id-photo":
+        if action == "download":
+            id_photo_model_management.start_id_photo_download()
+        else:
+            id_photo_model_management.cancel_id_photo_download()
+        return _get_id_photo_status()
+    raise ServiceException(ErrorCode.PARAM_ERROR, "该模型不支持此操作")
 
 
 @router.post("/models/status", response_model=ApiResponse[ModelStatusResponse])
@@ -60,7 +66,7 @@ def get_models_status() -> dict[str, object]:
 
 @router.post("/models/download", response_model=ApiResponse[ModelActionResponse])
 def download_model(body: ModelRequest) -> dict[str, object]:
-    """手动启动 MinerU 模型下载；重复请求会复用当前任务。"""
+    """手动启动指定模型下载；重复请求会复用当前任务。"""
     return success(data=_action_model(body.model_id, "download"))
 
 

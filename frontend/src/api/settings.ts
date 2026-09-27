@@ -29,6 +29,7 @@ export interface ModelStatusItem {
   stage: string
   error: string | null
   job_id: string | null
+  can_download: boolean
   can_delete: boolean
   delete_reason: string | null
 }
