@@ -38,6 +38,7 @@ import type {
   LayoutNode,
   MindMapData,
   MindMapEvent,
+  MindMapPNGExportOptions,
   MindMapPlugin,
   ThemeMode,
   ToolbarConfig,
@@ -55,6 +56,8 @@ interface Props {
   activeTags?: string[]
   readonly?: boolean
 }
+
+type MindMapExportFormat = 'markdown' | 'xmind' | 'svg' | 'png'
 
 interface DragReorderIntent {
   type: 'reorder'
@@ -77,6 +80,7 @@ type DragDropIntent =
 interface NodeDragState {
   pointerId: number
   nodeId: string
+  captureTarget: Element
   startX: number
   startY: number
   moved: boolean
@@ -114,6 +118,7 @@ const emit = defineEmits<{
   dataChange: [data: MindMapData[]]
   selectedNodeChange: [nodeId: string | null]
   activeTagsChange: [tags: string[]]
+  exportRequest: [format: MindMapExportFormat]
 }>()
 
 const svgRef = ref<SVGSVGElement | null>(null)
@@ -132,7 +137,6 @@ const historyFuture = ref<MindMapHistorySnapshot[]>([])
 const dragIntent = ref<DragDropIntent | null>(null)
 const contextMenu = ref<{ x: number; y: number; nodeId: string | null } | null>(null)
 const clipboardNode = shallowRef<MindMapData | null>(null)
-const exportError = ref<string | null>(null)
 const nodeDrag = ref<NodeDragState | null>(null)
 const pan = ref({ x: 0, y: 0 })
 const zoom = ref(1)
@@ -566,24 +570,6 @@ function handleContextNewRoot() {
   editText.value = node.text
 }
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
-}
-
-function reportExportError(error: unknown) {
-  exportError.value = error instanceof Error ? error.message : '导出失败，请稍后重试。'
-  window.setTimeout(() => {
-    exportError.value = null
-  }, 5000)
-}
-
 async function exportCurrentSVG(): Promise<string> {
   if (formulasEnabled.value) await initFormulaEngine()
   return buildExportSVG(
@@ -595,7 +581,7 @@ async function exportCurrentSVG(): Promise<string> {
   )
 }
 
-async function exportCurrentPNG(): Promise<Blob> {
+async function exportCurrentPNG(options: MindMapPNGExportOptions = {}): Promise<Blob> {
   return exportPreparedPNG({
     data: cloneMindMapData(mapData.value),
     direction: direction.value,
@@ -605,42 +591,14 @@ async function exportCurrentPNG(): Promise<Blob> {
     readonly: props.readonly,
     theme: theme.value,
     plugins: activePlugins.value,
-    padding: 48,
+    padding: options.padding ?? 48,
+    background: options.background,
+    scale: options.scale,
   })
 }
 
-async function handleExportSVG() {
-  try {
-    const svg = await exportCurrentSVG()
-    downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), 'mindmap.svg')
-  } catch (error) {
-    reportExportError(error)
-  }
-}
-
-async function handleExportPNG() {
-  try {
-    downloadBlob(await exportCurrentPNG(), 'mindmap.png')
-  } catch (error) {
-    reportExportError(error)
-  }
-}
-
-function handleExportMarkdown() {
-  try {
-    const markdown = toMarkdownMultiRoot(mapData.value, activePlugins.value)
-    downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), 'mindmap.md')
-  } catch (error) {
-    reportExportError(error)
-  }
-}
-
-function handleExportXMind() {
-  try {
-    downloadBlob(exportMindMapToXMind(mapData.value), 'mindmap.xmind')
-  } catch (error) {
-    reportExportError(error)
-  }
+function handleContextExport(format: MindMapExportFormat) {
+  emit('exportRequest', format)
 }
 
 function handleCreateSibling(nodeId: string) {
@@ -877,11 +835,15 @@ function updateDragIntent(clientX: number, clientY: number, sourceId: string) {
 
 function handleNodePointerDown(event: PointerEvent, nodeId: string) {
   if (props.readonly || event.button !== 0 || editingNodeId.value) return
+  const captureTarget = event.currentTarget
+  if (!(captureTarget instanceof Element)) return
+
   event.stopPropagation()
   selectedNodeId.value = nodeId
   nodeDrag.value = {
     pointerId: event.pointerId,
     nodeId,
+    captureTarget,
     startX: event.clientX,
     startY: event.clientY,
     moved: false,
@@ -890,7 +852,8 @@ function handleNodePointerDown(event: PointerEvent, nodeId: string) {
     lastMoveTarget: null,
   }
   dragIntent.value = null
-  svgRef.value?.setPointerCapture(event.pointerId)
+  // 节点自身作为捕获目标，避免点击与双击被重定向到 SVG 画布；拖拽事件仍会冒泡到画布。
+  captureTarget.setPointerCapture(event.pointerId)
 }
 
 function handlePointerDown(event: PointerEvent) {
@@ -949,16 +912,15 @@ function commitNodeDrag(drag: NodeDragState) {
   publishMarkdown()
 }
 
-function releasePointer(pointerId: number) {
-  const svg = svgRef.value
-  if (svg?.hasPointerCapture(pointerId)) svg.releasePointerCapture(pointerId)
+function releasePointer(pointerId: number, target: Element | null = svgRef.value) {
+  if (target?.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
 }
 
 function cancelNodeDrag() {
   const drag = nodeDrag.value
   if (!drag) return
 
-  releasePointer(drag.pointerId)
+  releasePointer(drag.pointerId, drag.captureTarget)
   mapData.value = cloneMindMapData(drag.historySnapshot.mapData)
   splitIndices.value = { ...drag.historySnapshot.splitIndices }
   selectedNodeId.value = drag.historySnapshot.selectedNodeId
@@ -1016,7 +978,7 @@ function handlePointerUp(event: PointerEvent) {
     }
 
     const completedDrag = nodeDrag.value ?? drag
-    releasePointer(event.pointerId)
+    releasePointer(event.pointerId, drag.captureTarget)
     nodeDrag.value = null
     dragIntent.value = null
     commitNodeDrag(completedDrag)
@@ -1304,15 +1266,11 @@ defineExpose({
       @paste="handleContextPaste"
       @new-root="handleContextNewRoot"
       @direction-change="setDirection"
-      @export-svg="handleExportSVG"
-      @export-png="handleExportPNG"
-      @export-markdown="handleExportMarkdown"
-      @export-xmind="handleExportXMind"
+      @export-svg="handleContextExport('svg')"
+      @export-png="handleContextExport('png')"
+      @export-markdown="handleContextExport('markdown')"
+      @export-xmind="handleContextExport('xmind')"
     />
-
-    <div v-if="exportError" class="mindmap-export-error" role="alert">
-      {{ exportError }}
-    </div>
 
     <div v-if="toolbarConfig.history" class="mindmap-history-controls" aria-label="历史操作">
       <button type="button" class="mindmap-ctrl-btn" :disabled="!canUndo" aria-label="撤销" title="撤销" @click="handleUndo">

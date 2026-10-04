@@ -1,5 +1,7 @@
+/** 清洗思维导图生成的内联 SVG，保留公式图形并拦截危险元素与 URL。 */
 const ALLOWED_ELEMENTS = new Set([
   'a',
+  'svg',
   'circle',
   'defs',
   'g',
@@ -16,6 +18,8 @@ const ALLOWED_ELEMENTS = new Set([
 const ALLOWED_ATTRIBUTES = new Set([
   'aria-label',
   'class',
+  'color',
+  'd',
   'clip-path',
   'clip-rule',
   'dominant-baseline',

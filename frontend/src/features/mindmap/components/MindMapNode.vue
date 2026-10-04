@@ -78,7 +78,7 @@ const content = computed(() => measureNodeContent(
 const svgMarkup = computed(() => {
   const parts = [
     buildSvgNodeTextString(
-      props.node.text,
+      content.value.mainText,
       fontSize.value,
       fontWeight.value,
       fontFamily.value,

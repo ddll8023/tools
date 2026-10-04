@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal
 chcp 65001 >nul
 title 工具盒子 Dev
@@ -67,8 +67,8 @@ if not exist "backend\.venv\Scripts\python.exe" (
 )
 
 echo [提示] 模型不会在启动时下载，请在软件“设置”页面手动下载。
-echo [提示] 修改后端代码后需 Ctrl+C 退出并重新启动。
-echo [启动] 正在启动 后端 + 前端 + Electron ...
+echo [INFO] Restart after changing backend code.
+echo [START] Starting backend + frontend + Electron ...
 echo.
 
 node electron/dev-runner.js

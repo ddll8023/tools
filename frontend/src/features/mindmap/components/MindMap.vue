@@ -1,3 +1,4 @@
+<!-- 思维导图工作区：组合 Markdown 编辑器、查看器和导出交互。 -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { BaseSelect } from '@/components/common'
@@ -11,6 +12,7 @@ import {
 import type {
   LayoutDirection,
   MindMapData,
+  MindMapPNGExportOptions,
   MindMapEvent,
   MindMapPlugin,
   ThemeMode,
@@ -128,15 +130,27 @@ function handleViewerActiveTagsChange(tags: string[]) {
   emit('activeTagsChange', tags)
 }
 
+function handleViewerExportRequest(format: MindMapExportFormat) {
+  emit('exportRequest', format)
+}
+
 function resetExample() {
   handleMarkdownChange(DEFAULT_MARKDOWN)
   handleDirectionChange(props.defaultDirection)
   emit('reset')
 }
 
-function toggleEditor() {
-  editorCollapsed.value = !editorCollapsed.value
+function setEditorCollapsed(collapsed: boolean) {
+  editorCollapsed.value = collapsed
   requestAnimationFrame(() => viewerRef.value?.fitView())
+}
+
+function toggleEditor() {
+  setEditorCollapsed(!editorCollapsed.value)
+}
+
+function handleEditorPaste(value: string) {
+  if (value.trim()) setEditorCollapsed(true)
 }
 
 function handleExportSelect(format: string) {
@@ -169,7 +183,7 @@ defineExpose({
   },
   exportToXMind: () => viewerRef.value?.exportToXMind(),
   exportToSVG: () => viewerRef.value?.exportToSVG(),
-  exportToPNG: () => viewerRef.value?.exportToPNG(),
+  exportToPNG: (options?: MindMapPNGExportOptions) => viewerRef.value?.exportToPNG(options),
   selectNode: (nodeId: string | null) => viewerRef.value?.selectNode(nodeId),
   focusNode: (nodeId: string) => viewerRef.value?.focusNode(nodeId),
   expandNode: (nodeId: string) => viewerRef.value?.expandNode(nodeId),
@@ -233,6 +247,7 @@ defineExpose({
             class-name="mindmap-workspace-editor"
             :readonly="readonly"
             @update:model-value="handleMarkdownChange"
+            @paste="handleEditorPaste"
           />
         </div>
         <p class="mindmap-editor-hint">两个空格表示一级子节点；修改后地图会实时更新。</p>
@@ -255,6 +270,7 @@ defineExpose({
           @selected-node-change="handleViewerSelectedNodeChange"
           @active-tags-change="handleViewerActiveTagsChange"
           @direction-change="handleViewerDirectionChange"
+          @export-request="handleViewerExportRequest"
         />
       </section>
     </div>
