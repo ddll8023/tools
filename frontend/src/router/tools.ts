@@ -44,6 +44,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'qrcode'],
     component: () => import('@/views/tools/QrCode.vue'),
   },
+  'lan-transfer': {
+    icon: ['fas', 'tower-broadcast'],
+    component: () => import('@/views/tools/LanTransfer.vue'),
+  },
   'id-photo': {
     icon: ['fas', 'id-card'],
     component: () => import('@/views/tools/IdPhoto.vue'),

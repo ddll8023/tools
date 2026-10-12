@@ -1,6 +1,6 @@
 /** 桌面主进程：管理应用窗口、后端生命周期和受限桌面能力。 */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { existsSync, statSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
@@ -14,6 +14,10 @@ const APP_DATA_DIR_NAME = '工具盒子'
 const INTERNAL_APP_NAME = 'toolbox-desktop'
 const SAFE_USER_AGENT = `Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 Electron/${process.versions.electron}`
 const UNIFIED_USER_DATA_DIR = path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
+// 控制面凭据由后端在启动时生成，桌面外壳只读不写，且不进入局域网页面。
+const CONTROL_TOKEN_PATH = path.join(UNIFIED_USER_DATA_DIR, 'runtime', 'control-token')
+const CONTROL_TOKEN_RETRY_DELAY_MS = 100
+const CONTROL_TOKEN_MAX_ATTEMPTS = 20
 
 // Electron 可能把应用名拼入 User-Agent；内部标识必须保持 ASCII，中文仅用于界面和数据目录。
 app.setName(INTERNAL_APP_NAME)
@@ -23,7 +27,7 @@ app.setPath('userData', UNIFIED_USER_DATA_DIR)
 const isDev = !app.isPackaged
 const VITE_PORT = 5173
 const VITE_URL = `http://127.0.0.1:${VITE_PORT}`
-const BACKEND_PORT = 4740
+const BACKEND_PORT = 18740
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`
 const ROOT_DIR = path.resolve(__dirname, '..')
 const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
@@ -83,6 +87,21 @@ function createWindow() {
 /** 窗口控制 IPC：只注册一次，避免窗口重建时重复注册抛错 */
 function registerWindowIpc() {
   ipcMain.handle('get-app-data-path', () => app.getPath('userData'))
+
+  // 后端就绪前凭据文件可能尚未写入，因此带短重试；失败时不记录凭据内容。
+  ipcMain.handle('control:token', async () => {
+    for (let attempt = 0; attempt < CONTROL_TOKEN_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const token = readFileSync(CONTROL_TOKEN_PATH, 'utf-8').trim()
+        if (token) return token
+      } catch {
+        // 文件尚未生成，等待后重试
+      }
+      await new Promise((resolve) => setTimeout(resolve, CONTROL_TOKEN_RETRY_DELAY_MS))
+    }
+    console.error('[main] 读取控制面凭据失败:', CONTROL_TOKEN_PATH)
+    return ''
+  })
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize()
   })
@@ -97,6 +116,49 @@ function registerWindowIpc() {
     mainWindow?.close()
   })
   ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+
+  // 局域网投送：多选任意文件，返回绝对路径供后端原地读取，不做上传
+  ipcMain.handle('dialog:pick-files', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: '选择要投送的文件',
+      properties: ['openFile', 'multiSelections'],
+    }
+
+    const result =
+      mainWindow && !mainWindow.isDestroyed()
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options)
+    if (result.canceled) return []
+
+    const picked: Array<{ path: string; name: string; size: number }> = []
+    for (const filePath of result.filePaths) {
+      try {
+        picked.push({
+          path: filePath,
+          name: path.basename(filePath),
+          size: statSync(filePath).size,
+        })
+      } catch {
+        // 无法 stat 的条目直接跳过，由前端按缺失处理
+      }
+    }
+    return picked
+  })
+
+  // 接收目录选择：只返回绝对路径，由后端校验可写并持久化
+  ipcMain.handle('dialog:pick-directory', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: '选择接收目录',
+      properties: ['openDirectory', 'createDirectory'],
+    }
+
+    const result =
+      mainWindow && !mainWindow.isDestroyed()
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return ''
+    return result.filePaths[0]
+  })
 
   // 本地 Markdown 选择：返回绝对路径，后端据此读取同目录 images/ 资源
   ipcMain.handle('dialog:pick-markdown', async () => {

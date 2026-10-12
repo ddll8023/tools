@@ -1,7 +1,7 @@
 /** 验证设置页证件照模型下载、进度和路径边界。 */
-import { test, expect } from '@playwright/test'
+import { test, expect } from './support/desktopApi'
 
-const modelApi = 'http://127.0.0.1:4740/api/v1/settings/models'
+const modelApi = 'http://127.0.0.1:18740/api/v1/settings/models'
 
 function mineruStatus() {
   return {

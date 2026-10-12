@@ -112,6 +112,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "anyio" },
     { name = "doclayout-yolo" },
     { name = "einops" },
     { name = "fastapi" },
@@ -127,6 +128,7 @@ dependencies = [
     { name = "paddlepaddle" },
     { name = "pdf2docx" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pyclipper" },
     { name = "pydantic-settings" },
     { name = "pymupdf" },
@@ -144,6 +146,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.5" },
+    { name = "anyio", specifier = ">=4.14.0" },
     { name = "doclayout-yolo", specifier = ">=0.0.4" },
     { name = "einops", specifier = ">=0.8" },
     { name = "fastapi", specifier = ">=0.138.0" },
@@ -159,6 +162,7 @@ requires-dist = [
     { name = "paddlepaddle", specifier = ">=3.3.1" },
     { name = "pdf2docx", specifier = "==0.5.13" },
     { name = "pillow", specifier = ">=12.2.0" },
+    { name = "psutil", specifier = ">=7.2.2" },
     { name = "pyclipper", specifier = ">=1.4.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pymupdf", specifier = ">=1.27.2.3" },

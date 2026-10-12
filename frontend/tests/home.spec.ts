@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './support/desktopApi'
 
 test.describe('首页', () => {
   test.beforeEach(async ({ page }) => {

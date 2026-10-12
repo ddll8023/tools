@@ -1,5 +1,5 @@
 /** 思维导图公式预览回归测试：覆盖行内与块级公式的 SVG 显示。 */
-import { expect, test } from '@playwright/test'
+import { expect, test } from './support/desktopApi'
 
 test('预览保留行内公式图形', async ({ page }) => {
   await page.goto('/#/tools/mindmap')

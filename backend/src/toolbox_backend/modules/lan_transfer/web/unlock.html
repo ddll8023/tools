@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>输入访问口令</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="card">
+        <p class="eyebrow">局域网投送</p>
+        <h1 class="device">访问口令</h1>
+        <p class="hint">电脑端已为本次投送设置口令，请输入后继续。</p>
+      </header>
+
+      <form class="card" method="post" action="/unlock">
+        <label class="label" for="passphrase">口令</label>
+        <input
+          class="input"
+          id="passphrase"
+          name="passphrase"
+          type="password"
+          autocomplete="off"
+          autofocus
+          required
+        />
+        <p class="error" id="passphrase-error" hidden>口令不正确，请重新输入。</p>
+        <button class="button" type="submit">继续</button>
+      </form>
+
+      <section class="card notice">
+        <p class="notice-text">口令只用于限制未持有凭据的访问者，不能替代传输加密。</p>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

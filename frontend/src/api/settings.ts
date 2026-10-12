@@ -1,7 +1,5 @@
 /** 设置页的本地模型状态与管理 API。 */
-import type { ApiResponse } from '@/types/tool'
-
-const API_BASE = 'http://127.0.0.1:4740'
+import { apiFetch, readApiResponse } from '@/api/client'
 
 export const MINERU_PIPELINE_MODEL_ID = 'mineru-pipeline' as const
 export const ID_PHOTO_MODEL_ID = 'id-photo' as const
@@ -38,47 +36,39 @@ interface ModelStatusResponse {
   models: ModelStatusItem[]
 }
 
-async function readModelResponse<T>(response: Response): Promise<T> {
-  const json: ApiResponse<T> = await response.json()
-  if (json.code !== 0 || json.data === null) {
-    throw new Error(json.message || '模型服务请求失败')
-  }
-  return json.data
-}
-
 export async function fetchModelStatus(): Promise<ModelStatusItem[]> {
-  const response = await fetch(`${API_BASE}/api/v1/settings/models/status`, {
+  const response = await apiFetch(`/api/v1/settings/models/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   })
-  const data = await readModelResponse<ModelStatusResponse>(response)
+  const data = await readApiResponse<ModelStatusResponse>(response, '模型服务请求失败')
   return data.models
 }
 
 export async function startModelDownload(modelId: ModelId): Promise<ModelStatusItem> {
-  const response = await fetch(`${API_BASE}/api/v1/settings/models/download`, {
+  const response = await apiFetch(`/api/v1/settings/models/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model_id: modelId }),
   })
-  return readModelResponse<ModelStatusItem>(response)
+  return readApiResponse<ModelStatusItem>(response, '模型服务请求失败')
 }
 
 export async function cancelModelDownload(modelId: ModelId): Promise<ModelStatusItem> {
-  const response = await fetch(`${API_BASE}/api/v1/settings/models/cancel`, {
+  const response = await apiFetch(`/api/v1/settings/models/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model_id: modelId }),
   })
-  return readModelResponse<ModelStatusItem>(response)
+  return readApiResponse<ModelStatusItem>(response, '模型服务请求失败')
 }
 
 export async function deleteModel(modelId: ModelId): Promise<ModelStatusItem> {
-  const response = await fetch(`${API_BASE}/api/v1/settings/models/delete`, {
+  const response = await apiFetch(`/api/v1/settings/models/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model_id: modelId }),
   })
-  return readModelResponse<ModelStatusItem>(response)
+  return readApiResponse<ModelStatusItem>(response, '模型服务请求失败')
 }

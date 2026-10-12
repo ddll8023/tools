@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './support/desktopApi'
 
 test.describe('PDF 转 Markdown 工具页', () => {
   test.beforeEach(async ({ page }) => {

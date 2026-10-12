@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './support/desktopApi'
 
 const SIDEBAR_COLLAPSED_CLASS = '-ml-\\[220px\\]'
 

@@ -25,7 +25,7 @@ release_port() {
 }
 
 echo "[端口] 检查端口占用..."
-release_port 4740
+release_port 18740
 release_port 5173
 
 echo ""

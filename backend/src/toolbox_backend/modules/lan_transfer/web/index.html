@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>局域网投送</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="card">
+        <p class="eyebrow">局域网投送</p>
+        <h1 class="device" id="device-name">已连接</h1>
+        <p class="hint" id="session-hint">正在读取会话信息…</p>
+      </header>
+
+      <section class="card">
+        <h2 class="section-title">发送文件到电脑</h2>
+        <label class="drop" for="upload-input">
+          <span class="drop-title">选择要发送的文件</span>
+          <span class="drop-hint">支持一次选择多个文件，逐个上传</span>
+        </label>
+        <input class="file-input" id="upload-input" type="file" multiple />
+        <p class="hint" id="upload-hint">
+          文件先送到电脑端的临时隔离区，需在电脑上确认后才会保存到接收目录。
+        </p>
+        <ul class="upload-list" id="upload-list" hidden></ul>
+      </section>
+
+      <section class="card">
+        <h2 class="section-title">接收电脑发来的文件</h2>
+        <p class="hint" id="files-hint">正在读取待取件列表…</p>
+        <ul class="files" id="files-list" hidden></ul>
+      </section>
+
+      <section class="card notice">
+        <h2 class="section-title">传输说明</h2>
+        <ul class="notice-list">
+          <li>本次连接未加密，同一网络中的其他人可能看到传输内容。</li>
+          <li>仅在你信任的局域网内使用，不要在公共或访客网络传输敏感文件。</li>
+          <li>会话到期或电脑端停止投送后，此页面立即失效。</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

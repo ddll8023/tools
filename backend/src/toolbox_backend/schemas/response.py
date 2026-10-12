@@ -1,3 +1,4 @@
+"""定义统一响应壳与业务错误码。"""
 from typing import Generic, TypeVar
 from enum import IntEnum
 from pydantic import BaseModel, ConfigDict
@@ -9,6 +10,7 @@ class ErrorCode(IntEnum):
     SUCCESS = 0
     PARAM_ERROR = 1001
     DATA_NOT_FOUND = 1002
+    UNAUTHORIZED = 1003
     UNSUPPORTED_FILE_FORMAT = 3001
     FILE_TOO_LARGE = 3002
     CONVERSION_FAILED = 3003

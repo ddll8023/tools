@@ -34,6 +34,11 @@ resource_dir = BACKEND_ROOT / "resources"
 if resource_dir.is_dir():
     datas.append((str(resource_dir), "resources"))
 
+# 局域网投送的浏览器页面随应用分发，PyInstaller 不会自动收集包内非 .py 文件。
+lan_web_dir = BACKEND_ROOT / "src" / "toolbox_backend" / "modules" / "lan_transfer" / "web"
+if lan_web_dir.is_dir():
+    datas.append((str(lan_web_dir), "toolbox_backend/modules/lan_transfer/web"))
+
 app_entry = BACKEND_ROOT / "packaging" / "server.py"
 a = Analysis(
     [str(app_entry)],

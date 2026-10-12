@@ -31,6 +31,10 @@ interface UpdaterApi {
 
 /** 本地文件选择：桌面端读取磁盘路径，供后端直接访问同目录资源 */
 interface FileDialogApi {
+  /** 局域网投送用的多选对话框，返回文件绝对路径 */
+  pickFiles: () => Promise<Array<{ path: string; name: string; size: number }>>
+  /** 接收目录选择，返回绝对路径；取消时为空字符串 */
+  pickDirectory: () => Promise<string>
   pickMarkdown: () => Promise<{ path: string; name: string; size: number } | null>
   getPathForFile: (file: File) => string
   takeDroppedPaths: () => string[]
@@ -45,6 +49,8 @@ interface DesktopApi {
     app: string
   }
   getAppDataPath: () => Promise<string>
+  /** 控制面凭据，仅桌面外壳可提供；缺失时前端不得直连控制面 */
+  getControlToken: () => Promise<string>
   fileDialog: FileDialogApi
   windowControls: WindowControls
   updater: UpdaterApi

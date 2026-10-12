@@ -6,8 +6,7 @@
 import type { ApiResponse } from '@/types/tool'
 import type { MarkdownSource } from '@/features/markdown/source'
 import type { PdfOptions } from '@/features/markdown-pdf/types'
-
-const API_BASE = 'http://127.0.0.1:4740'
+import { apiFetch } from '@/api/client'
 
 export interface ConvertResponse {
   task_id: string
@@ -111,7 +110,7 @@ export async function generateQrCode(content?: string, file?: File): Promise<QrC
     formData.append('content', content ?? '')
   }
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/qr-code/generate`, {
+  const res = await apiFetch(`/api/v1/tools/qr-code/generate`, {
     method: 'POST',
     body: formData,
   })
@@ -125,7 +124,7 @@ export async function generateQrCode(content?: string, file?: File): Promise<QrC
 }
 
 export async function fetchToolList(): Promise<ToolItem[]> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/list`, {
+  const res = await apiFetch(`/api/v1/tools/list`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   })
@@ -143,7 +142,7 @@ export async function convertPdf(file: File, deepParse = false): Promise<Convert
   formData.append('file', file)
   formData.append('deep_parse', String(deepParse))
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/convert`, {
+  const res = await apiFetch(`/api/v1/tools/pdf-to-markdown/convert`, {
     method: 'POST',
     body: formData,
   })
@@ -158,7 +157,7 @@ export async function convertPdf(file: File, deepParse = false): Promise<Convert
 }
 
 export async function getProgress(taskId: string): Promise<GetProgressResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/progress`, {
+  const res = await apiFetch(`/api/v1/tools/pdf-to-markdown/progress`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -174,7 +173,7 @@ export async function getProgress(taskId: string): Promise<GetProgressResponse> 
 }
 
 export async function getPreview(taskId: string): Promise<PreviewResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/preview`, {
+  const res = await apiFetch(`/api/v1/tools/pdf-to-markdown/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -198,7 +197,7 @@ export async function downloadMd(
   taskId: string,
   markdownContent?: string,
 ): Promise<{ missingTotal: number }> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-markdown/download`, {
+  const res = await apiFetch(`/api/v1/tools/pdf-to-markdown/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId, markdown_content: markdownContent ?? null }),
@@ -250,7 +249,7 @@ export async function convertPdfToWord(file: File): Promise<PdfToWordConvertResp
   const formData = new FormData()
   formData.append('file', file)
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-word/convert`, {
+  const res = await apiFetch(`/api/v1/tools/pdf-to-word/convert`, {
     method: 'POST',
     body: formData,
   })
@@ -264,7 +263,7 @@ export async function convertPdfToWord(file: File): Promise<PdfToWordConvertResp
 }
 
 export async function downloadWord(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/pdf-to-word/download`, {
+  const res = await apiFetch(`/api/v1/tools/pdf-to-word/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -316,7 +315,7 @@ export async function convertMarkdownToPdf(
   form.append('margin_mm', String(options.marginMm))
   form.append('font_size', String(options.fontSize))
   form.append('page_numbers', String(options.pageNumbers))
-  const response = await fetch(`${API_BASE}/api/v1/tools/markdown-to-pdf/convert`, {
+  const response = await apiFetch(`/api/v1/tools/markdown-to-pdf/convert`, {
     method: 'POST', body: form, signal,
   })
   if (!response.ok) throw new Error(`转换失败（HTTP ${response.status}）`)
@@ -326,7 +325,7 @@ export async function convertMarkdownToPdf(
 }
 
 export async function downloadMarkdownToPdf(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-pdf/download`, {
+  const res = await apiFetch(`/api/v1/tools/markdown-to-pdf/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -377,7 +376,7 @@ export async function convertLocalMarkdownToWord(
 }
 
 async function requestConvert(formData: FormData): Promise<MarkdownToWordConvertResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-word/convert`, {
+  const res = await apiFetch(`/api/v1/tools/markdown-to-word/convert`, {
     method: 'POST',
     body: formData,
   })
@@ -392,7 +391,7 @@ export async function downloadMarkdownToWord(
   taskId: string,
   outputFormat: MarkdownToWordOutputFormat,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/markdown-to-word/download`, {
+  const res = await apiFetch(`/api/v1/tools/markdown-to-word/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -428,7 +427,7 @@ export async function convertEpub(file: File): Promise<EpubConvertResponse> {
   const formData = new FormData()
   formData.append('file', file)
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/epub-to-markdown/convert`, {
+  const res = await apiFetch(`/api/v1/tools/epub-to-markdown/convert`, {
     method: 'POST',
     body: formData,
   })
@@ -440,7 +439,7 @@ export async function convertEpub(file: File): Promise<EpubConvertResponse> {
 }
 
 export async function getEpubPreview(taskId: string): Promise<EpubPreviewResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/epub-to-markdown/preview`, {
+  const res = await apiFetch(`/api/v1/tools/epub-to-markdown/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -453,7 +452,7 @@ export async function getEpubPreview(taskId: string): Promise<EpubPreviewRespons
 }
 
 export async function downloadEpub(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/epub-to-markdown/download`, {
+  const res = await apiFetch(`/api/v1/tools/epub-to-markdown/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -494,7 +493,7 @@ export async function convertWord(file: File): Promise<ConvertResponse> {
   const formData = new FormData()
   formData.append('file', file)
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/word-to-pdf/convert`, {
+  const res = await apiFetch(`/api/v1/tools/word-to-pdf/convert`, {
     method: 'POST',
     body: formData,
   })
@@ -509,7 +508,7 @@ export async function convertWord(file: File): Promise<ConvertResponse> {
 }
 
 export async function downloadPdf(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/word-to-pdf/download`, {
+  const res = await apiFetch(`/api/v1/tools/word-to-pdf/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -562,7 +561,7 @@ export async function convertImages(
   formData.append('target_format', targetFormat)
   formData.append('quality', String(quality))
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/image-converter/convert`, {
+  const res = await apiFetch(`/api/v1/tools/image-converter/convert`, {
     method: 'POST',
     body: formData,
   })
@@ -577,7 +576,7 @@ export async function convertImages(
 }
 
 export async function downloadConvertedFile(taskId: string, fileIndex: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/image-converter/download`, {
+  const res = await apiFetch(`/api/v1/tools/image-converter/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
@@ -603,7 +602,7 @@ export async function downloadConvertedFile(taskId: string, fileIndex: number): 
 }
 
 export async function downloadAllConverted(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/image-converter/download-all`, {
+  const res = await apiFetch(`/api/v1/tools/image-converter/download-all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId }),
@@ -680,7 +679,7 @@ export interface IdPhotoRenderParams {
 }
 
 export async function fetchIdPhotoTemplates(): Promise<IdPhotoTemplateItem[]> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/templates`, {
+  const res = await apiFetch(`/api/v1/tools/id-photo/templates`, {
     method: 'POST',
   })
   const json: ApiResponse<IdPhotoTemplateItem[]> = await res.json()
@@ -714,7 +713,7 @@ export async function processIdPhoto(
     formData.append('max_file_size_kb', String(maxFileSizeKb))
   }
 
-  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/process`, {
+  const res = await apiFetch(`/api/v1/tools/id-photo/process`, {
     method: 'POST',
     body: formData,
   })
@@ -726,7 +725,7 @@ export async function processIdPhoto(
 }
 
 export async function renderIdPhoto(params: IdPhotoRenderParams): Promise<IdPhotoResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/render`, {
+  const res = await apiFetch(`/api/v1/tools/id-photo/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
@@ -739,7 +738,7 @@ export async function renderIdPhoto(params: IdPhotoRenderParams): Promise<IdPhot
 }
 
 export async function fetchIdPhotoFile(taskId: string, fileIndex: number): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/download`, {
+  const res = await apiFetch(`/api/v1/tools/id-photo/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
@@ -761,7 +760,7 @@ export async function downloadIdPhotoFile(
   fileIndex: number,
   fallbackFilename = `${taskId}_${fileIndex}.jpg`,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/tools/id-photo/download`, {
+  const res = await apiFetch(`/api/v1/tools/id-photo/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),

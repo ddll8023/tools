@@ -10,6 +10,12 @@ import {
   startModelDownload,
 } from '@/api/settings'
 import type { ModelStatus, ModelStatusItem } from '@/api/settings'
+import {
+  fetchLanPreferences,
+  fetchLanReceiveRecords,
+  updateLanPreferences,
+} from '@/api/lanTransfer'
+import type { LanPreferences, LanReceiveRecord } from '@/api/lanTransfer'
 
 const model = ref<ModelStatusItem | null>(null)
 const idPhotoModel = ref<ModelStatusItem | null>(null)
@@ -17,8 +23,18 @@ const loading = ref(true)
 const actionPending = ref(false)
 const errorMessage = ref('')
 const pathCopied = ref(false)
+const lanPreferences = ref<LanPreferences | null>(null)
+const lanDeviceName = ref('')
+const lanRecords = ref<LanReceiveRecord[]>([])
+const lanLoading = ref(true)
+const lanSaving = ref(false)
+const lanError = ref('')
+const lanSaved = ref(false)
+const lanPathCopied = ref('')
 let pollTimer: number | undefined
 let pathCopyTimer: number | undefined
+let lanSaveTimer: number | undefined
+let lanCopyTimer: number | undefined
 
 const statusLabels: Record<ModelStatus, string> = {
   not_downloaded: '未下载',
@@ -198,14 +214,116 @@ function formatBytes(bytes: number | null): string {
   return `${Math.round(bytes / 1024)} KB`
 }
 
+/** 读取投送偏好与接收记录；两者任一失败只影响各自区块。 */
+async function loadLanSettings() {
+  lanLoading.value = true
+  try {
+    const preferences = await fetchLanPreferences()
+    lanPreferences.value = preferences
+    lanDeviceName.value = preferences.device_name
+  } catch (error) {
+    lanError.value = error instanceof Error ? error.message : '读取投送设置失败'
+  }
+  try {
+    lanRecords.value = await fetchLanReceiveRecords()
+  } catch (error) {
+    lanError.value = error instanceof Error ? error.message : '读取接收记录失败'
+  }
+  lanLoading.value = false
+}
+
+function flashLanSaved() {
+  lanSaved.value = true
+  if (lanSaveTimer !== undefined) window.clearTimeout(lanSaveTimer)
+  lanSaveTimer = window.setTimeout(() => {
+    lanSaved.value = false
+    lanSaveTimer = undefined
+  }, 1500)
+}
+
+function reportLanError(error: unknown, fallback: string) {
+  lanError.value = error instanceof Error && error.message ? error.message : fallback
+}
+
+async function saveLanDeviceName() {
+  if (lanSaving.value) return
+  lanSaving.value = true
+  lanError.value = ''
+  try {
+    const preferences = await updateLanPreferences({ device_name: lanDeviceName.value })
+    lanPreferences.value = preferences
+    lanDeviceName.value = preferences.device_name
+    flashLanSaved()
+  } catch (error) {
+    reportLanError(error, '保存设备名失败')
+  } finally {
+    lanSaving.value = false
+  }
+}
+
+async function pickLanReceiveDir() {
+  if (lanSaving.value) return
+  const pickDirectory = window.desktopApi?.fileDialog?.pickDirectory
+  if (!pickDirectory) {
+    lanError.value = '请通过工具盒子桌面应用选择接收目录'
+    return
+  }
+
+  lanSaving.value = true
+  lanError.value = ''
+  try {
+    const picked = await pickDirectory()
+    if (picked) {
+      lanPreferences.value = await updateLanPreferences({ receive_dir: picked })
+      flashLanSaved()
+    }
+  } catch (error) {
+    reportLanError(error, '保存接收目录失败')
+  } finally {
+    lanSaving.value = false
+  }
+}
+
+/** 清空接收目录设置，回退到默认的下载目录。 */
+async function resetLanReceiveDir() {
+  if (lanSaving.value) return
+  lanSaving.value = true
+  lanError.value = ''
+  try {
+    lanPreferences.value = await updateLanPreferences({ receive_dir: '' })
+    flashLanSaved()
+  } catch (error) {
+    reportLanError(error, '恢复默认接收目录失败')
+  } finally {
+    lanSaving.value = false
+  }
+}
+
+async function copyLanPath(path: string) {
+  try {
+    await navigator.clipboard.writeText(path)
+    lanPathCopied.value = path
+    if (lanCopyTimer !== undefined) window.clearTimeout(lanCopyTimer)
+    lanCopyTimer = window.setTimeout(() => {
+      lanPathCopied.value = ''
+      lanCopyTimer = undefined
+    }, 1500)
+  } catch {
+    lanError.value = '复制路径失败，请手动选择并复制。'
+  }
+}
+
 onMounted(async () => {
   await loadStatus()
   scheduleStatusPoll()
+  await loadLanSettings()
 })
 
 onBeforeUnmount(() => {
   clearPollTimer()
   if (pathCopyTimer !== undefined) window.clearTimeout(pathCopyTimer)
+  if (lanSaveTimer !== undefined) window.clearTimeout(lanSaveTimer)
+  if (lanCopyTimer !== undefined) window.clearTimeout(lanCopyTimer)
 })
 </script>
 
@@ -216,6 +334,7 @@ onBeforeUnmount(() => {
       <h1 class="text-[25px] font-bold tracking-[-0.3px]">设置</h1>
       <p class="mt-2 text-[13px] leading-relaxed text-text-secondary">
         可查看并按需准备 MinerU 与证件照模型；仅可删除用户数据目录中的模型资源。
+        局域网投送的设备名与接收目录也在这里设置。
       </p>
     </header>
 
@@ -452,6 +571,123 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </template>
+      </div>
+    </section>
+
+    <section
+      class="mt-4 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm"
+      aria-labelledby="lan-transfer-title"
+    >
+      <div class="border-b border-border px-6 py-4">
+        <h2 id="lan-transfer-title" class="text-[16px] font-semibold">局域网投送</h2>
+        <p class="mt-1 text-[12px] text-text-secondary">
+          设备名与接收目录保存在用户数据目录中，优先级高于环境变量；留空即回退默认值。
+        </p>
+      </div>
+
+      <div v-if="lanLoading" class="px-6 py-5">
+        <div class="h-12 animate-pulse rounded-lg bg-hover" aria-label="正在读取投送设置"></div>
+      </div>
+
+      <div v-else class="px-6 py-5">
+        <p
+          v-if="lanError"
+          class="mb-4 rounded-xl border border-[#F1C4C4] bg-[#FFF4F4] px-4 py-3 text-[13px] text-[#B42318]"
+          role="alert"
+        >
+          {{ lanError }}
+        </p>
+
+        <label for="lan-device-name" class="mb-2 block text-[13px] font-medium">设备名</label>
+        <div class="flex flex-wrap gap-2">
+          <input
+            id="lan-device-name"
+            v-model="lanDeviceName"
+            type="text"
+            maxlength="60"
+            :placeholder="lanPreferences?.default_device_name || '设备名'"
+            class="min-w-[220px] flex-1 rounded-xl border border-border bg-[#F9F9F6] px-4 py-2.5 text-[13px] outline-none transition-colors focus:border-primary focus:bg-surface"
+          />
+          <button
+            type="button"
+            class="rounded-lg bg-primary px-4 py-2 text-[12px] font-medium text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="lanSaving"
+            @click="saveLanDeviceName"
+          >
+            保存设备名
+          </button>
+        </div>
+        <p class="mt-2 text-[12px] text-text-tertiary">
+          浏览器页面用它标识这台电脑；留空时使用系统主机名
+          {{ lanPreferences?.default_device_name }}。
+        </p>
+        <p class="mt-1 text-[12px] text-text-tertiary">
+          修改后需停止并重新开启投送会话，新名称才会在浏览器页面与工具页生效。
+        </p>
+
+        <div class="mt-6 border-t border-border pt-5">
+          <p class="mb-2 text-[13px] font-medium">接收目录</p>
+          <p class="mb-3 break-all text-[12px] text-text-secondary">{{ lanPreferences?.receive_dir }}</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-text-secondary transition-colors hover:border-primary hover:text-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="lanSaving"
+              @click="pickLanReceiveDir"
+            >
+              选择目录
+            </button>
+            <button
+              v-if="lanPreferences && lanPreferences.receive_dir !== lanPreferences.default_receive_dir"
+              type="button"
+              class="rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-text-secondary transition-colors hover:border-error hover:text-error disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="lanSaving"
+              @click="resetLanReceiveDir"
+            >
+              恢复默认
+            </button>
+            <span v-if="lanSaved" class="text-[12px] text-success" role="status">已保存</span>
+          </div>
+          <p class="mt-2 text-[12px] text-text-tertiary">
+            确认接收的文件写入该目录，重名时自动避让而不是覆盖；默认位置是下载目录下的「工具盒子」。
+          </p>
+        </div>
+
+        <div class="mt-6 border-t border-border pt-5">
+          <p class="mb-3 text-[13px] font-medium">接收记录（最近 {{ lanRecords.length }} 条）</p>
+          <p v-if="lanRecords.length === 0" class="text-[12px] text-text-tertiary">
+            还没有接收记录。确认接收的文件会出现在这里。
+          </p>
+          <ul v-else class="space-y-2">
+            <li
+              v-for="record in lanRecords"
+              :key="`${record.received_at}-${record.destination}`"
+              class="rounded-xl border border-border px-4 py-3"
+            >
+              <div class="flex flex-wrap items-center gap-3 text-[13px]">
+                <span class="min-w-0 flex-1 truncate font-medium">{{ record.name }}</span>
+                <span class="text-[12px] text-text-secondary">{{ formatBytes(record.size_bytes) }}</span>
+                <span class="text-[12px] text-text-tertiary">{{ record.received_at }}</span>
+              </div>
+              <div class="mt-1 flex items-center gap-2">
+                <span class="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
+                  {{ record.destination }}
+                </span>
+                <button
+                  type="button"
+                  class="flex-shrink-0 rounded p-1 text-text-tertiary transition-colors hover:text-primary-dark"
+                  :aria-label="`复制 ${record.name} 的路径`"
+                  @click="copyLanPath(record.destination)"
+                >
+                  <font-awesome-icon :icon="['far', 'copy']" />
+                </button>
+                <span v-if="lanPathCopied === record.destination" class="text-[11px] text-success" role="status">
+                  已复制
+                </span>
+              </div>
+            </li>
+          </ul>
+        </div>
       </div>
     </section>
   </main>

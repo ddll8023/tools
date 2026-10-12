@@ -23,7 +23,7 @@ const ROOT_DIR = path.resolve(__dirname, '..')
 const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
 const BACKEND_DIR = path.join(ROOT_DIR, 'backend')
 const VITE_PORT = 5173
-const BACKEND_PORT = 4740
+const BACKEND_PORT = 18740
 const TOOLBOX_DATA_DIR = process.env.TOOLBOX_DATA_DIR || getUnifiedDataDir()
 
 function waitForBackendReady(maxWait = 60000) {
@@ -48,12 +48,12 @@ function waitForBackendReady(maxWait = 60000) {
         })
       })
       req.on('error', () => {
-        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时（30s）'))
+        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时（60s）'))
         setTimeout(check, 500)
       })
       req.on('timeout', () => {
         req.destroy()
-        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时（30s）'))
+        if (Date.now() - start > maxWait) return reject(new Error('后端启动超时（60s）'))
         setTimeout(check, 500)
       })
       req.write(postData)
@@ -184,7 +184,7 @@ async function main() {
   })
 
   await waitForBackendReady()
-  console.log('[dev-runner] ✓ 后端已就绪 (http://127.0.0.1:4740)')
+  console.log('[dev-runner] ✓ 后端已就绪 (http://127.0.0.1:18740)')
 
   // 3. 启动 Vite
   console.log('[dev-runner] 3/3 启动 Vite 开发服务器 ...')

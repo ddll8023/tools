@@ -7,6 +7,7 @@
 import { ref, computed } from 'vue'
 import { convertImages, downloadConvertedFile, downloadAllConverted } from '@/api/tools'
 import type { ImageConvertResponse, ImageConvertFileItem } from '@/api/tools'
+import { apiFetch } from '@/api/client'
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 const MAX_FILE_COUNT = 20
@@ -126,14 +127,11 @@ async function handleConvert() {
 }
 
 async function loadPreview(taskId: string, fileIndex: number) {
-  const res = await fetch(
-    `http://127.0.0.1:4740/api/v1/tools/image-converter/download`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
-    },
-  )
+  const res = await apiFetch(`/api/v1/tools/image-converter/download`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, file_index: fileIndex }),
+  })
   if (!res.ok) return
   const blob = await res.blob()
   previewUrl.value = URL.createObjectURL(blob)

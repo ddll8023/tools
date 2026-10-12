@@ -72,6 +72,15 @@ _TOOLS = [
         icon="fas fa-qrcode",
         available=True,
     ),
+    ToolListItem(
+        id="lan-transfer",
+        name="LanTransfer",
+        path="lan-transfer",
+        display_name="局域网投送",
+        description="在同一局域网内用浏览器与手机、平板等设备双向投送文件",
+        icon="fas fa-tower-broadcast",
+        available=True,
+    ),
 ]
 
 
