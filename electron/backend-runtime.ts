@@ -10,6 +10,8 @@ import * as http from 'http'
 import * as path from 'path'
 
 const BACKEND_PORT = 18740
+// 与后端 backend/src/toolbox_backend/api/v1/router.py 的版本前缀保持一致；遗漏前缀会直接落到 404。
+const API_PREFIX = '/api/v1'
 const READY_TIMEOUT_MS = 30000
 const TOKEN_MAX_ATTEMPTS = 40
 const TOKEN_RETRY_DELAY_MS = 100
@@ -98,6 +100,24 @@ function envelopeData(value: unknown): Record<string, unknown> | null {
   return shell.data as Record<string, unknown>
 }
 
+/** 取出成功壳里的数据；失败时带出 HTTP 状态、业务码和后端原文，避免路由或认证错误被笼统描述掩盖。 */
+function requireData(
+  response: { status: number; json: unknown },
+  fallback: string,
+): Record<string, unknown> {
+  const data = envelopeData(response.json)
+  if (data) return data
+  const shell = typeof response.json === 'object' && response.json !== null
+    ? response.json as { code?: unknown; message?: unknown; detail?: unknown }
+    : null
+  const message = typeof shell?.message === 'string' && shell.message
+    ? shell.message
+    : typeof shell?.detail === 'string' ? shell.detail : ''
+  const code = typeof shell?.code === 'number' ? `code=${shell.code}` : ''
+  const parts = [`HTTP ${response.status}`, code, message].filter(Boolean)
+  throw new Error(`${fallback}（${parts.join(' ')}）`)
+}
+
 export class BackendRuntime {
   private readonly options: BackendOptions
   private process: ChildProcess | null = null
@@ -172,7 +192,7 @@ export class BackendRuntime {
         throw new Error(`后端进程在就绪前退出${this.errorHint()}`)
       }
       try {
-        const response = await postJson('/api/v1/health', {}, null, 2000)
+        const response = await postJson(`${API_PREFIX}/health`, {}, null, 2000)
         const data = envelopeData(response.json)
         if (data && data.launch_id === this.launchId && typeof data.instance_id === 'string') {
           this.identity = {
@@ -233,10 +253,13 @@ export class BackendRuntime {
   async status(): Promise<RuntimeSnapshot> {
     if (!this.identity) throw new Error('尚未取得后端启动身份')
     const token = await this.readToken()
-    const response = await postJson('/runtime/status', { expected_instance_id: this.identity.instance_id }, token, 5000)
-    const data = envelopeData(response.json)
-    if (!data) throw new Error('后端未返回运行时状态')
-    return data as unknown as RuntimeSnapshot
+    const response = await postJson(
+      `${API_PREFIX}/runtime/status`,
+      { expected_instance_id: this.identity.instance_id },
+      token,
+      5000,
+    )
+    return requireData(response, '后端未返回运行时状态') as unknown as RuntimeSnapshot
   }
 
   /**
@@ -254,13 +277,12 @@ export class BackendRuntime {
       if (!identity) throw new Error('缺少启动身份，无法请求有序停止')
       const token = await this.readToken()
       const response = await postJson(
-        '/runtime/stop',
+        `${API_PREFIX}/runtime/stop`,
         { expected_instance_id: identity.instance_id },
         token,
         timeoutMs,
       )
-      const data = envelopeData(response.json) as RuntimeSnapshot | null
-      if (!data) throw new Error('后端未返回停止结果')
+      const data = requireData(response, '后端未返回停止结果') as unknown as RuntimeSnapshot
       activeTasks = data.usb_active_tasks
       usbStopped = data.usb_stopped
       usbForced = data.usb_forced

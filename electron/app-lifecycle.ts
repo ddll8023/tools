@@ -9,7 +9,8 @@ import { BackendRuntime, RuntimeSnapshot } from './backend-runtime'
 
 export type LifecycleDecision = { ok: true } | { ok: false; reason: string }
 
-const STOP_TIMEOUT_MS = 30000
+// 取值须长于后端 APP_SHUTDOWN_TIMEOUT_SECONDS（见 backend/src/toolbox_backend/core/config.py）及其后的收尾，否则会误判为停止未确认。
+const STOP_TIMEOUT_MS = 45000
 
 export class AppLifecycle {
   private readonly backend: BackendRuntime
@@ -110,7 +111,8 @@ export class AppLifecycle {
     return this.runStop()
   }
 
-  async prepareInstall(window: BrowserWindow | null, run: () => void): Promise<LifecycleDecision> {    if (this.decision) {
+  async prepareInstall(window: BrowserWindow | null, run: () => void): Promise<LifecycleDecision> {
+    if (this.decision) {
       this.afterStop = run
       return this.decision
     }
