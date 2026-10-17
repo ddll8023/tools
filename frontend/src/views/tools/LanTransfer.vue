@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <p v-if="errorMessage" class="mt-4 text-[12px] text-error">{{ errorMessage }}</p>
+        <p v-if="errorMessage" class="mt-4 rounded-xl border border-[#FFD7D7] bg-[#FFF5F5] px-4 py-3 text-[12px] text-error">{{ errorMessage }}</p>
       </template>
     </section>
 
@@ -589,7 +589,7 @@ onBeforeUnmount(() => {
         </li>
       </ul>
 
-      <p v-if="outgoingError" class="mt-3 text-[12px] text-error">{{ outgoingError }}</p>
+      <p v-if="outgoingError" class="mt-3 rounded-xl border border-[#FFD7D7] bg-[#FFF5F5] px-4 py-3 text-[12px] text-error">{{ outgoingError }}</p>
     </section>
 
     <section v-if="isActive" class="mb-5 rounded-2xl border border-border bg-surface p-8">
@@ -644,7 +644,7 @@ onBeforeUnmount(() => {
         </li>
       </ul>
 
-      <p v-if="pendingError" class="mt-3 text-[12px] text-error">{{ pendingError }}</p>
+      <p v-if="pendingError" class="mt-3 rounded-xl border border-[#FFD7D7] bg-[#FFF5F5] px-4 py-3 text-[12px] text-error">{{ pendingError }}</p>
 
       <p v-if="session && session.used_bytes > 0" class="mt-4 text-[12px] text-text-tertiary">
         隔离区已占用 {{ formatSize(session.used_bytes) }} / 上限 {{ formatSize(session.max_bytes) }}
@@ -691,5 +691,10 @@ onBeforeUnmount(() => {
         <li>部分网络开启了客户端隔离，其他设备可能无法访问电脑，此时只能更换网络。</li>
       </ul>
     </section>
+
+    <footer class="mt-5 text-center text-[12px] text-text-tertiary">
+      <font-awesome-icon :icon="['far', 'clock']" class="mr-1" />
+      局域网明文传输，仅在会话期间开放端口；停止投送后入口立即失效
+    </footer>
   </main>
 </template>
