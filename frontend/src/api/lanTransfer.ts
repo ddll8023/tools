@@ -36,6 +36,7 @@ export interface LanSessionStatus {
   state: LanSessionState
   expires_at: string | null
   remaining_seconds: number
+  transfer_active: boolean
   device_name: string
   has_passphrase: boolean
   pending_count: number

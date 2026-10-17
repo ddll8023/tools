@@ -3,7 +3,8 @@
 关闭序列在此统一编排：失效凭据、取消在途上传与下载、停止监听、等待读写结束、
 清理未确认内容与待取件清单。停止监听本身不等于关闭完成，因此会话状态只有在
 监听与在途传输都结束后才标记为已关闭。接收确认与关闭共用同一把锁，因此不会
-出现确认与清理同时操作同一个文件的情况。
+出现确认与清理同时操作同一个文件的情况。会话到期时若仍有在途上传或下载，关闭
+会顺延，直到传输结束或达到最长存活时间。
 """
 
 from __future__ import annotations
@@ -49,6 +50,8 @@ logger = setup_logger(__name__)
 # 关闭时等待在途上传停止读写的最长时间，超时只记录并交给下次启动回收。
 _UPLOAD_WAIT_SECONDS = 5.0
 _WAIT_POLL_SECONDS = 0.05
+# 有在途传输时每次到期只顺延一小段，避免长时间占用监听端口。
+_EXTEND_STEP_SECONDS = 300
 
 _server = LanWebServer()
 # 串行化启停、口令变更与接收确认，避免并发操作破坏会话状态。
@@ -108,6 +111,7 @@ def _snapshot(
         addresses=_build_addresses(session) if accepting else [],
         free_disk_bytes=session.budget.free_disk_bytes(),
         cleanup_failures=cleanup_failures or [],
+        transfer_active=session.has_active_transfer,
         message=message or session.error or "",
     )
 
@@ -143,23 +147,35 @@ def _outgoing_list(session: LanSession) -> LanOutgoingListResponse:
 
 
 def _watch_expiry(session: LanSession) -> None:
-    """启动有效期监视线程，到期后自动关闭会话。"""
-    delay = max(0.0, session.expires_at - time.time())
+    """启动有效期监视线程，到期后按传输状态决定关闭或顺延。"""
     threading.Thread(
         target=_expire_after,
-        args=(session, delay),
+        args=(session,),
         name="lan-transfer-expiry",
         daemon=True,
     ).start()
 
 
-def _expire_after(session: LanSession, delay: float) -> None:
-    """等待有效期结束；会话已被替换或提前关闭时直接退出。"""
-    time.sleep(delay)
-    if sessions.current() is not session:
+def _expire_after(session: LanSession) -> None:
+    """等待有效期结束；有在途传输时顺延，达到最长存活时间后强制关闭。"""
+    while True:
+        time.sleep(max(0.0, session.expires_at - time.time()))
+        if sessions.current() is not session:
+            return
+        # 到期检查期间可能已被状态查询续期，继续等待新的有效期。
+        if session.expires_at - time.time() > 0:
+            continue
+        if session.has_active_transfer:
+            if time.time() >= session.hard_deadline:
+                logger.info("局域网投送会话达到最长存活时间，强制关闭")
+                stop_session("会话已达最长时限，自动关闭")
+                return
+            session.expires_at = time.time() + _EXTEND_STEP_SECONDS
+            logger.info("投送传输进行中，会话顺延 %s 秒", _EXTEND_STEP_SECONDS)
+            continue
+        logger.info("局域网投送会话到期，自动关闭")
+        stop_session("会话已到期，自动关闭")
         return
-    logger.info("局域网投送会话到期，自动关闭")
-    stop_session("会话已到期，自动关闭")
 
 
 def _wait_for_uploads(session: LanSession) -> None:
@@ -201,7 +217,11 @@ def start_session() -> LanSessionResponse:
         ):
             return _snapshot(current, "投送会话已在运行")
 
-        session = create_session(_device_name(), settings.LAN_TRANSFER_TTL_SECONDS)
+        session = create_session(
+            _device_name(),
+            settings.LAN_TRANSFER_TTL_SECONDS,
+            settings.LAN_TRANSFER_MAX_EXTEND_SECONDS,
+        )
         sessions.install(session)
         try:
             session.port = _server.start(
@@ -225,12 +245,16 @@ def start_session() -> LanSessionResponse:
 
 
 def get_status() -> LanSessionResponse:
-    """返回当前会话状态；无会话时返回空闲状态。"""
+    """返回当前会话状态；无会话时返回空闲状态，到期时按传输状态关闭或顺延。"""
     session = sessions.current()
     if session is None:
         return _snapshot(None, "投送未开启")
     if session.is_accepting and session.remaining_seconds <= 0:
-        return stop_session("会话已到期，自动关闭")
+        if not session.has_active_transfer:
+            return stop_session("会话已到期，自动关闭")
+        if time.time() >= session.hard_deadline:
+            return stop_session("会话已达最长时限，自动关闭")
+        session.expires_at = time.time() + _EXTEND_STEP_SECONDS
     return _snapshot(session, "")
 
 

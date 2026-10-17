@@ -28,6 +28,7 @@ class LanSessionResponse(BaseModel):
     state: LanSessionState = Field(..., description="会话状态")
     expires_at: str | None = Field(None, description="会话自动关闭时间")
     remaining_seconds: int = Field(0, description="距离自动关闭的剩余秒数")
+    transfer_active: bool = Field(False, description="是否有正在进行的上传或下载")
     device_name: str = Field("", description="浏览器页面展示的设备名")
     has_passphrase: bool = Field(False, description="是否已设置访问口令")
     pending_count: int = Field(0, description="等待确认接收的文件数量")

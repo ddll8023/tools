@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # 局域网投送：仅在用户显式开启会话期间监听，默认首选端口避开控制面 18740。
     LAN_TRANSFER_HOST: str = "0.0.0.0"
     LAN_TRANSFER_PORT: int = 18751
+    # 会话基础有效期；有在途传输时可顺延，上限由 LAN_TRANSFER_MAX_EXTEND_SECONDS 控制。
     LAN_TRANSFER_TTL_SECONDS: int = 1800
     # 接收方向限额：上传中与待确认内容共同占用同一份会话预算。
     LAN_TRANSFER_MAX_FILE_BYTES: int = 2 * 1024 * 1024 * 1024
@@ -50,6 +51,8 @@ class Settings(BaseSettings):
     LAN_TRANSFER_MIN_FREE_DISK_BYTES: int = 1024 * 1024 * 1024
     # 发送方向只登记路径不复制内容，因此只约束清单条数。
     LAN_TRANSFER_MAX_SEND_FILES: int = 100
+    # 传输进行中允许顺延自动关闭，但会话总存活时间不超过 TTL 加该值。
+    LAN_TRANSFER_MAX_EXTEND_SECONDS: int = 7200
     # 接收记录只保留最近若干条，避免历史文件无限增长。
     LAN_TRANSFER_MAX_RECEIVE_RECORDS: int = 100
     # 留空时按用户下载目录下的子目录接收，阶段四再做可配置界面。

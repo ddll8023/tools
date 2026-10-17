@@ -38,8 +38,8 @@ class SessionState(StrEnum):
 class InFlightRegistry:
     """登记会话内正在进行的长耗时操作，供关闭时统一取消。
 
-    阶段一没有长耗时数据操作，登记表为空；阶段二、三的上传与下载在此登记，
-    使关闭序列能够在释放资源前先取消在途操作。
+    上传与下载在开始读写前登记、结束时注销；关闭序列据此先取消在途操作，
+    再释放监听与文件句柄。
     """
 
     def __init__(self) -> None:
@@ -60,6 +60,11 @@ class InFlightRegistry:
         with self._lock:
             self._handlers.pop(handle, None)
 
+    def count(self) -> int:
+        """返回当前登记的在途操作数量。"""
+        with self._lock:
+            return len(self._handlers)
+
     def cancel_all(self) -> int:
         """取消全部在途操作并清空登记表，返回被取消的数量。"""
         with self._lock:
@@ -77,7 +82,7 @@ def _constant_time_equal(expected: str, candidate: str | None) -> bool:
 
 @dataclass
 class LanSession:
-    """一次局域网投送会话的凭据、有效期与运行状态。"""
+    """一次局域网投送会话的凭据、有效期、最长存活时间与运行状态。"""
 
     url_token: str
     cookie_secret: str
@@ -85,6 +90,7 @@ class LanSession:
     session_id: str
     created_at: float
     expires_at: float
+    hard_deadline: float
     state: SessionState = SessionState.STARTING
     port: int | None = None
     error: str | None = None
@@ -98,6 +104,11 @@ class LanSession:
     def remaining_seconds(self) -> int:
         """返回距离自动关闭的剩余秒数，已过期时为 0。"""
         return max(0, int(self.expires_at - time.time()))
+
+    @property
+    def has_active_transfer(self) -> bool:
+        """判断是否存在正在进行的上传或下载。"""
+        return self.in_flight.count() > 0
 
     @property
     def is_accepting(self) -> bool:
@@ -123,8 +134,8 @@ class LanSession:
         self.cookie_secret = secrets.token_urlsafe(_COOKIE_SECRET_BYTES)
 
 
-def create_session(device_name: str, ttl_seconds: int) -> LanSession:
-    """生成新的会话凭据、有效期与资源预算。"""
+def create_session(device_name: str, ttl_seconds: int, max_extend_seconds: int) -> LanSession:
+    """生成新的会话凭据、有效期、最长存活时间与资源预算。"""
     now = time.time()
     return LanSession(
         url_token=secrets.token_urlsafe(_URL_TOKEN_BYTES),
@@ -133,6 +144,7 @@ def create_session(device_name: str, ttl_seconds: int) -> LanSession:
         session_id=secrets.token_hex(_SESSION_ID_BYTES),
         created_at=now,
         expires_at=now + ttl_seconds,
+        hard_deadline=now + ttl_seconds + max_extend_seconds,
         budget=SessionBudget(),
         pending=PendingQueue(),
         outgoing=OutgoingList(),

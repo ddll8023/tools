@@ -111,6 +111,7 @@ const statusLabel = computed(() => {
 
 const remainingText = computed(() => {
   if (!isActive.value) return ''
+  if (session.value?.transfer_active) return '传输中，自动关闭已暂停'
   const seconds = session.value?.remaining_seconds ?? 0
   if (seconds <= 0) return '即将自动关闭'
   const minutes = Math.floor(seconds / 60)
@@ -401,7 +402,7 @@ onBeforeUnmount(() => {
 
         <p class="mb-5 text-[13px] leading-relaxed text-text-secondary">
           开启后电脑会在局域网内监听一个临时端口，其他设备用浏览器打开链接即可参与投送。
-          端口只存在于会话期间，停止投送或超时后立即关闭。
+          端口只存在于会话期间，停止投送或超时后关闭；若仍在传输，关闭会顺延到传输结束或达到最长存活时间。
         </p>
 
         <p
