@@ -48,6 +48,10 @@ const toolLocalRegistry: Record<string, Pick<ToolConfig, 'icon' | 'component'>> 
     icon: ['fas', 'tower-broadcast'],
     component: () => import('@/views/tools/LanTransfer.vue'),
   },
+  'usb-transfer': {
+    icon: ['fas', 'plug'],
+    component: () => import('@/views/tools/UsbTransfer.vue'),
+  },
   'id-photo': {
     icon: ['fas', 'id-card'],
     component: () => import('@/views/tools/IdPhoto.vue'),

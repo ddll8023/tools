@@ -8,6 +8,10 @@ const buildDir = path.join(rootDir, 'build')
 const runtimeDir = path.join(buildDir, 'backend-runtime')
 const workDir = path.join(buildDir, 'backend-work')
 const specFile = path.join(backendDir, 'packaging', 'backend.spec')
+// 精确版本，不再只约束上界：不同 PyInstaller 的收集与重签名行为会变。
+const PYINSTALLER_VERSION = '6.20.0'
+const MINIMUM_MACOS_VERSION = '14.0'
+const usbNativeDir = path.join(buildDir, 'usb-native', 'dist')
 
 function firstExisting(candidates) {
   return candidates.find((candidate) => fs.existsSync(candidate))
@@ -33,6 +37,41 @@ fs.mkdirSync(buildDir, { recursive: true })
 
 console.log(`[backend-build] Python: ${python}`)
 console.log(`[backend-build] 平台: ${process.platform}/${process.arch}`)
+
+const versionCheck = spawnSync(python, ['-m', 'PyInstaller', '--version'], { encoding: 'utf8' })
+if (versionCheck.status !== 0) {
+  console.error('[backend-build] 无法读取 PyInstaller 版本，请先在 backend/.venv 安装固定版本。')
+  process.exit(1)
+}
+const installedVersion = (versionCheck.stdout || '').trim()
+if (installedVersion !== PYINSTALLER_VERSION) {
+  console.error(`[backend-build] 需要 PyInstaller ${PYINSTALLER_VERSION}，当前为 ${installedVersion || '未知'}`)
+  process.exit(1)
+}
+
+// USB 原生依赖只随 macOS arm64 产物分发，其他平台不构建也不收集。
+if (process.platform === 'darwin') {
+  if (process.arch !== 'arm64') {
+    console.error(`[backend-build] macOS 只构建 arm64，当前为 ${process.arch}`)
+    process.exit(1)
+  }
+  console.log('[backend-build] 构建 USB 原生依赖...')
+  const usbBuild = spawnSync(process.execPath, [path.join(rootDir, 'scripts', 'build-usb-native.js')], {
+    cwd: rootDir,
+    stdio: 'inherit',
+  })
+  if (usbBuild.status !== 0) {
+    console.error('[backend-build] USB 原生依赖构建失败')
+    process.exit(usbBuild.status || 1)
+  }
+  if (!fs.existsSync(path.join(usbNativeDir, 'manifest.json'))) {
+    console.error(`[backend-build] 缺少 USB 原生依赖清单: ${usbNativeDir}`)
+    process.exit(1)
+  }
+} else {
+  console.log('[backend-build] 当前平台不包含 USB 原生依赖')
+}
+
 console.log('[backend-build] 开始构建 PyInstaller 后端运行时...')
 
 const result = spawnSync(
@@ -51,7 +90,11 @@ const result = spawnSync(
   {
     cwd: rootDir,
     stdio: 'inherit',
-    env: { ...process.env, PYTHONHASHSEED: '0' },
+    env: {
+      ...process.env,
+      PYTHONHASHSEED: '0',
+      ...(process.platform === 'darwin' ? { MACOSX_DEPLOYMENT_TARGET: MINIMUM_MACOS_VERSION } : {}),
+    },
   },
 )
 

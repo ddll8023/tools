@@ -55,25 +55,51 @@ jobs:
           npm ci
           npm --prefix frontend ci
 
+      - name: Verify macOS native build tools
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in autoconf automake libtool pkg-config make cc; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "缺少构建工具: $tool"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "运行镜像缺少 USB 原生依赖构建工具；本工作流不自动安装，请先补齐。"
+            exit 1
+          fi
+
       - name: Install backend dependencies (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           uv sync --directory backend --frozen
-          uv pip install --python backend/.venv/bin/python 'pyinstaller<7'
+          uv pip install --python backend/.venv/bin/python 'pyinstaller==6.20.0'
 
       - name: Install backend dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           uv sync --directory backend --frozen
-          uv pip install --python backend/.venv/Scripts/python.exe 'pyinstaller<7'
+          uv pip install --python backend/.venv/Scripts/python.exe 'pyinstaller==6.20.0'
 
       - name: Build desktop runtime
         run: |
           npm run build:frontend
           npm run compile:electron
           npm run build:backend
+
+      - name: Stage USB native sources (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp build/usb-native/dist/usb-sources.tar.gz release/
+          cp build/usb-native/dist/build-info.json release/usb-build-info.json
 
       - name: Package installer
         run: npx electron-builder ${{ matrix.electron_args }} --publish never
@@ -83,16 +109,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          output="release/SHA256SUMS-${{ matrix.artifact_name }}.txt"
           for file in release/*; do
-            if [ -f "$file" ]; then
-              shasum -a 256 "$file"
-            fi
-          done > "release/SHA256SUMS-${{ matrix.artifact_name }}.txt"
+            [ -f "$file" ] || continue
+            [ "$file" = "$output" ] && continue
+            shasum -a 256 "$file"
+          done > "$output"
 
       - name: Generate checksums (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Get-ChildItem release -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content "release/SHA256SUMS-${{ matrix.artifact_name }}.txt"
+        run: |
+          $output = "release/SHA256SUMS-${{ matrix.artifact_name }}.txt"
+          Get-ChildItem release -File |
+            Where-Object { $_.Name -notlike 'SHA256SUMS-*' } |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
+            Set-Content $output
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
@@ -104,6 +137,8 @@ jobs:
             release/*.exe
             release/*.yml
             release/*.blockmap
+            release/usb-sources.tar.gz
+            release/usb-build-info.json
             release/SHA256SUMS-*.txt
           if-no-files-found: error
           retention-days: 14
@@ -129,7 +164,8 @@ jobs:
           set -euo pipefail
           mkdir -p release
           find downloaded/toolbox-macos-arm64 -type f \
-            \( -name '*.dmg' -o -name '*.zip' -o -name '*.yml' -o -name '*.blockmap' -o -name 'SHA256SUMS-*.txt' \) \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.yml' -o -name '*.blockmap' \
+               -o -name 'usb-sources.tar.gz' -o -name 'usb-build-info.json' -o -name 'SHA256SUMS-*.txt' \) \
             -exec cp {} release/ \;
           find downloaded/toolbox-windows-x64 -type f \
             \( -name '*.exe' -o -name '*.zip' -o -name '*.yml' -o -name '*.blockmap' -o -name 'SHA256SUMS-*.txt' \) \

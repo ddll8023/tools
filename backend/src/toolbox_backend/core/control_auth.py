@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import secrets
 from pathlib import Path
 
 from toolbox_backend.core.config import settings
+from toolbox_backend.core import runtime
 from toolbox_backend.core.logging import setup_logger
 
 logger = setup_logger(__name__)
@@ -30,7 +32,7 @@ def token_path() -> Path:
 
 
 def _write_token_file(path: Path, token: str) -> None:
-    """以受限权限原子写入凭据，避免读取方看到写入一半的内容。"""
+    """以受限权限原子写入凭据身份包，避免读取方看到拼接或半写入内容。"""
     os.makedirs(path.parent, exist_ok=True)
     # Windows 的 chmod 语义有限，此处仅保证 POSIX 下不被其他用户读取。
     os.chmod(path.parent, _DIR_MODE)
@@ -44,8 +46,11 @@ def _write_token_file(path: Path, token: str) -> None:
 def initialize_control_token() -> str:
     """生成本次启动的控制面凭据并落盘，返回凭据值。"""
     global _token
+    owner = runtime.identity()
     token = secrets.token_urlsafe(_TOKEN_BYTES)
-    _write_token_file(token_path(), token)
+    # 单个原子文件绑定身份与凭据，桌面端不能把旧凭据与新身份拼接使用。
+    bundle = {**owner.model_dump(), "token": token}
+    _write_token_file(token_path(), json.dumps(bundle, separators=(",", ":")))
     _token = token
     logger.info("控制面凭据已生成: %s", token_path())
     return token

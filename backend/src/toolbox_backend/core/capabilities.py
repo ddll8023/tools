@@ -5,6 +5,7 @@ from threading import RLock
 
 CAPABILITY_LIBREOFFICE = "libreoffice"
 CAPABILITY_ID_PHOTO = "id_photo"
+CAPABILITY_USB_TRANSFER = "usb_transfer"
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,10 @@ class CapabilityRegistry:
             CAPABILITY_ID_PHOTO: CapabilityStatus(
                 False,
                 "证件照模型或运行依赖不可用",
+            ),
+            CAPABILITY_USB_TRANSFER: CapabilityStatus(
+                False,
+                "有线传输当前仅支持 macOS",
             ),
         }
 

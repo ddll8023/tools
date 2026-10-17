@@ -1,0 +1,45 @@
+工具盒子 USB 有线传输 —— 第三方组件与分发说明
+
+本文件随应用包分发，说明 USB 有线传输所使用的第三方原生库组成、链接方式
+以及对应源码的获取位置。它是分发信息，不构成对最终许可义务的法律结论。
+
+一、实际随包分发的组件
+
+1. libmtp 1.1.23
+   - 上游：https://github.com/libmtp/libmtp
+   - 源码包：https://downloads.sourceforge.net/project/libmtp/libmtp/1.1.23/libmtp-1.1.23.tar.gz
+   - 构建选项包含 --disable-mtpz，即不启用 MTPZ 功能，也不链接 libgcrypt。
+   - 随包文件：libmtp.dylib（由构建产物的共享库重命名并重写依赖路径）
+   - 许可文本：licenses/libmtp-COPYING.txt
+   - 版权声明：见源码各文件头部，未在本文件中重新摘录或改写。
+
+2. libusb 1.0.30
+   - 上游：https://github.com/libusb/libusb
+   - 源码包：https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2
+   - 随包文件：libusb-1.0.0.dylib（保留上游文件名，仅重写依赖路径）
+   - 许可文本：licenses/libusb-COPYING.txt
+
+二、链接方式
+
+两个库均以独立动态库形式随包分发，通过 ctypes 在 USB 工作进程运行时加载，
+不静态链接进应用主二进制，也不修改上游源码。库之间使用包内相对路径
+（@loader_path）互相引用，不依赖用户机器上的 Homebrew 安装。
+
+三、已核对的声明与仍需核定的部分
+
+- libmtp 源码文件头部声明为「LGPL 2 版或更高版本」的措辞，仓库根目录 COPYING
+  文本为 LGPL 2.1；两者措辞不同，本文件不替上游统一。
+- libusb 源码文件头部声明为 LGPL 2.1-or-later。
+- 第三方包管理器标签、单个文件声明和仓库 COPYING 都不能单独代表整个产物的
+  许可结论。最终材料应按实际构建的版本、文件组成和链接方式核定。
+
+四、对应源码
+
+随发布资产提供 usb-sources-<版本>.tar.gz，内含两个上游源码包原件与本次构建的
+选项记录；应用包内 build-info.json 记录实际版本、摘要和构建参数。
+
+五、不在本说明范围内的事项
+
+- 本应用未使用 Developer ID 证书签名，也未经过 Apple 公证，因此不提供发布者
+  身份或 Gatekeeper 免提示的保证。
+- 本说明不构成法律意见；分发前如需确定正式许可结论，应另行核定。

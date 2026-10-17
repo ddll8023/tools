@@ -1,46 +1,62 @@
-/** 桌面主进程：管理应用窗口、后端生命周期和受限桌面能力。 */
+/** 桌面主进程：单实例、窗口、所属后端生命周期和受限桌面能力。 */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { existsSync, readFileSync, statSync } from 'fs'
+import { statSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
+import { AppLifecycle } from './app-lifecycle'
+import { BackendRuntime } from './backend-runtime'
 import {
   initializeUpdater,
   notifyUpdaterWindowReady,
   registerUpdaterIpc,
+  setLifecycle,
 } from './updater'
 
 const APP_DATA_DIR_NAME = '工具盒子'
 const INTERNAL_APP_NAME = 'toolbox-desktop'
 const SAFE_USER_AGENT = `Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 Electron/${process.versions.electron}`
-const UNIFIED_USER_DATA_DIR = path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
-// 控制面凭据由后端在启动时生成，桌面外壳只读不写，且不进入局域网页面。
-const CONTROL_TOKEN_PATH = path.join(UNIFIED_USER_DATA_DIR, 'runtime', 'control-token')
-const CONTROL_TOKEN_RETRY_DELAY_MS = 100
-const CONTROL_TOKEN_MAX_ATTEMPTS = 20
+const VITE_PORT = 5173
+const VITE_URL = `http://127.0.0.1:${VITE_PORT}`
+const ROOT_DIR = path.resolve(__dirname, '..')
+const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
+const DEV_BACKEND_DIR = path.join(ROOT_DIR, 'backend')
+
+/** 数据根只解析一次：环境变量、命令行显式值、默认目录三者取首个绝对路径。 */
+function resolveDataRoot(): string {
+  const argument = process.argv.find((item) => item.startsWith('--toolbox-data-dir='))
+  const fromArgument = argument ? argument.slice('--toolbox-data-dir='.length) : ''
+  const candidate = fromArgument || process.env.TOOLBOX_DATA_DIR || ''
+  if (candidate) return path.resolve(candidate)
+  return path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
+}
 
 // Electron 可能把应用名拼入 User-Agent；内部标识必须保持 ASCII，中文仅用于界面和数据目录。
 app.setName(INTERNAL_APP_NAME)
 app.userAgentFallback = SAFE_USER_AGENT
-app.setPath('userData', UNIFIED_USER_DATA_DIR)
+const DATA_ROOT = resolveDataRoot()
+app.setPath('userData', DATA_ROOT)
 
 const isDev = !app.isPackaged
-const VITE_PORT = 5173
-const VITE_URL = `http://127.0.0.1:${VITE_PORT}`
-const BACKEND_PORT = 18740
-const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`
-const ROOT_DIR = path.resolve(__dirname, '..')
-const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
-const DEV_BACKEND_DIR = path.join(ROOT_DIR, 'backend')
 const PACKAGED_BACKEND_DIR = path.join(process.resourcesPath, 'backend')
 const PACKAGED_BACKEND_EXECUTABLE = path.join(
   PACKAGED_BACKEND_DIR,
   process.platform === 'win32' ? 'toolbox-backend.exe' : 'toolbox-backend',
 )
 
+const backend = new BackendRuntime({
+  isDev,
+  dataRoot: DATA_ROOT,
+  devBackendDir: DEV_BACKEND_DIR,
+  packagedExecutable: PACKAGED_BACKEND_EXECUTABLE,
+  packagedCwd: DATA_ROOT,
+})
+const lifecycle = new AppLifecycle(backend)
+
 let viteProcess: ChildProcess | null = null
-let backendProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
+// 退出流程一旦开始，窗口全部关闭不应被误认为“可重启”状态。
+let quitRequested = false
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -64,11 +80,22 @@ function createWindow() {
     mainWindow?.webContents.send('window:maximize-changed', false)
   })
 
+  // 关闭窗口前先协调传输与后端；确认停止后才真正关闭。
+  mainWindow.on('close', (event) => {
+    if (lifecycle.stopped) return
+    event.preventDefault()
+    if (lifecycle.stopping) return
+    void lifecycle.prepareClose(mainWindow, 'close').then((decision) => {
+      if (!decision.ok) return
+      stopVite()
+      mainWindow?.close()
+    })
+  })
+
   if (isDev) {
     mainWindow.loadURL(VITE_URL)
-    if (!process.env.BACKEND_MANAGED) {
-      mainWindow.webContents.openDevTools()
-    }
+    // 开发态直接查看渲染进程日志；由 dev-runner 拉起时同样有用。
+    mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(ROOT_DIR, 'frontend', 'dist', 'index.html'))
   }
@@ -86,21 +113,16 @@ function createWindow() {
 
 /** 窗口控制 IPC：只注册一次，避免窗口重建时重复注册抛错 */
 function registerWindowIpc() {
-  ipcMain.handle('get-app-data-path', () => app.getPath('userData'))
+  ipcMain.handle('get-app-data-path', () => DATA_ROOT)
 
-  // 后端就绪前凭据文件可能尚未写入，因此带短重试；失败时不记录凭据内容。
+  // 凭据只交给当前实例的渲染进程；不属于本次启动时直接失败，不返回其他后端凭据。
   ipcMain.handle('control:token', async () => {
-    for (let attempt = 0; attempt < CONTROL_TOKEN_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const token = readFileSync(CONTROL_TOKEN_PATH, 'utf-8').trim()
-        if (token) return token
-      } catch {
-        // 文件尚未生成，等待后重试
-      }
-      await new Promise((resolve) => setTimeout(resolve, CONTROL_TOKEN_RETRY_DELAY_MS))
+    try {
+      return await backend.readToken()
+    } catch (error) {
+      console.error('[main] 读取控制面凭据失败:', error instanceof Error ? error.message : error)
+      return ''
     }
-    console.error('[main] 读取控制面凭据失败:', CONTROL_TOKEN_PATH)
-    return ''
   })
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize()
@@ -117,7 +139,7 @@ function registerWindowIpc() {
   })
   ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
 
-  // 局域网投送：多选任意文件，返回绝对路径供后端原地读取，不做上传
+  // 共享文件多选：只返回路径和文件元信息，具体读取与传输由业务处理
   ipcMain.handle('dialog:pick-files', async () => {
     const options: Electron.OpenDialogOptions = {
       title: '选择要投送的文件',
@@ -145,7 +167,7 @@ function registerWindowIpc() {
     return picked
   })
 
-  // 接收目录选择：只返回绝对路径，由后端校验可写并持久化
+  // 共享目录选择：返回绝对路径，作为来源或目标的校验由具体业务负责
   ipcMain.handle('dialog:pick-directory', async () => {
     const options: Electron.OpenDialogOptions = {
       title: '选择接收目录',
@@ -186,7 +208,7 @@ function registerWindowIpc() {
   })
 }
 
-/** 终止进程树：macOS/Linux 杀进程组，Windows 用 taskkill /T */
+/** 终止开发态 Vite 进程树；后端由 BackendRuntime 负责。 */
 function killProcessTree(proc: ChildProcess) {
   if (!proc || !proc.pid) return
   try {
@@ -200,118 +222,7 @@ function killProcessTree(proc: ChildProcess) {
       }
     }
   } catch {
-    try {
-      proc.kill()
-    } catch {
-      // 进程已退出
-    }
-  }
-}
-
-function waitForBackendReady(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + 30000
-    const check = () => {
-      const postData = JSON.stringify({})
-      const req = http.request(`${BACKEND_URL}/api/v1/health`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 2000
-      }, (res) => {
-        let body = ''
-        res.on('data', (chunk) => body += chunk)
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(body)
-            if (json.code === 0) return resolve()
-          } catch {
-            // 响应不是预期的 JSON，继续等待
-          }
-          if (Date.now() > deadline) { reject(new Error('后端启动超时')); return }
-          setTimeout(check, 500)
-        })
-      })
-      req.on('error', () => {
-        if (Date.now() > deadline) { reject(new Error('后端启动超时')); return }
-        setTimeout(check, 500)
-      })
-      req.on('timeout', () => {
-        req.destroy()
-        if (Date.now() > deadline) { reject(new Error('后端启动超时')); return }
-        setTimeout(check, 500)
-      })
-      req.write(postData)
-      req.end()
-    }
-    check()
-  })
-}
-
-function startBackend(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!isDev && !existsSync(PACKAGED_BACKEND_EXECUTABLE)) {
-      reject(new Error(`未找到后端运行时: ${PACKAGED_BACKEND_EXECUTABLE}`))
-      return
-    }
-
-    const command = isDev ? 'uv' : PACKAGED_BACKEND_EXECUTABLE
-    const args = isDev
-      ? [
-          'run', 'uvicorn', 'toolbox_backend.main:app',
-          '--app-dir', 'src',
-          '--host', '127.0.0.1', '--port', String(BACKEND_PORT),
-        ]
-      : []
-    const cwd = isDev ? DEV_BACKEND_DIR : app.getPath('userData')
-
-    backendProcess = spawn(command, args, {
-      cwd,
-      shell: isDev,
-      // 创建独立进程组，退出时可按组终止 uv 与 uvicorn 子进程
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-        PYTHONIOENCODING: 'utf-8',
-        TOOLBOX_DATA_DIR: app.getPath('userData'),
-      },
-    })
-
-    backendProcess.stdout?.on('data', (data: Buffer) => {
-      process.stdout.write(`[backend] ${data}`)
-    })
-    backendProcess.stderr?.on('data', (data: Buffer) => {
-      process.stderr.write(`[backend] ${data}`)
-    })
-
-    let settled = false
-    const succeed = () => {
-      if (settled) return
-      settled = true
-      resolve()
-    }
-    const fail = (error: Error) => {
-      if (settled) return
-      settled = true
-      reject(error)
-    }
-
-    backendProcess.on('error', fail)
-    backendProcess.on('exit', (code) => {
-      if (code !== null && code !== 0) {
-        fail(new Error(`后端进程退出，code=${code}`))
-      }
-    })
-
-    waitForBackendReady().then(succeed).catch(fail)
-  })
-}
-
-function stopBackend() {
-  if (backendProcess) {
-    killProcessTree(backendProcess)
-    backendProcess = null
+    // 进程已退出
   }
 }
 
@@ -379,72 +290,123 @@ function stopVite() {
   }
 }
 
-app.whenReady().then(async () => {
+// 单实例必须先于任何后端启动：第二个实例不生成凭据、不读取恢复记录。
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.exit(0)
+}
+
+// 终端中断同样走协调退出；开发启动器的信号不会绕过传输停止。
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    app.quit()
+  })
+}
+
+app.on('second-instance', () => {
+  void ensureBackendAndWindow()
+})
+
+/**
+ * 确保后端与窗口同时就绪：窗口存在时只聚焦；窗口已全部关闭且未处于停止状态时，
+ * 按需重新启动后端再建窗口，避免出现没有后端的窗口。
+ */
+async function ensureBackendAndWindow(): Promise<void> {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    return
+  }
+  if (lifecycle.stopped) return
+  if (!backend.isRunning) {
+    try {
+      await backend.start()
+    } catch (err) {
+      console.error('[main] 重新启动后端失败:', err)
+      return
+    }
+  }
+  createWindow()
+}
+
+async function bootstrap(): Promise<void> {
   registerWindowIpc()
   registerUpdaterIpc()
+  setLifecycle(lifecycle)
+
+  try {
+    console.log('[main] 启动所属后端...')
+    await backend.start()
+    console.log('[main] 后端已就绪')
+  } catch (err) {
+    // 未取得本次启动身份时不继续业务接入，也不认领端口上的其他服务。
+    console.error('[main] 后端启动失败:', err)
+    const detail = err instanceof Error ? err.message : String(err)
+    await lifecycle.stopWithoutPrompt()
+    if (app.isReady()) {
+      dialog.showErrorBox('后端启动失败', `${detail}\n\n已停止本次启动，请检查运行环境后重试。`)
+    }
+    app.quit()
+    return
+  }
 
   if (isDev) {
-    if (process.env.BACKEND_MANAGED) {
-      console.log('[main] 由 dev-runner 管理，跳过后端和 Vite 启动')
-    } else {
-      console.log('[main] 开发模式，启动后端...')
-      try {
-        await startBackend()
-        console.log('[main] 后端已就绪')
-      } catch (err) {
-        console.error('[main] 后端启动失败:', err)
-      }
-
-      console.log('[main] 开发模式，启动 Vite...')
-      try {
-        await startVite()
-        console.log('[main] Vite 已就绪')
-      } catch (err) {
-        console.error('[main] Vite 启动失败:', err)
-        app.quit()
-        return
-      }
-    }
-  } else {
-    console.log('[main] 生产模式，启动内置后端...')
+    console.log('[main] 开发模式，启动 Vite...')
     try {
-      await startBackend()
-      console.log('[main] 内置后端已就绪')
+      await startVite()
+      console.log('[main] Vite 已就绪')
     } catch (err) {
-      console.error('[main] 内置后端启动失败:', err)
+      console.error('[main] Vite 启动失败:', err)
+      await lifecycle.stopWithoutPrompt()
+      app.quit()
+      return
     }
   }
 
   createWindow()
   initializeUpdater()
 
-  app.on('activate', async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      if (!isDev && !backendProcess) {
-        try {
-          await startBackend()
-        } catch (err) {
-          console.error('[main] 重新启动内置后端失败:', err)
-        }
-      }
-      createWindow()
-    }
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length > 0) return
+    void ensureBackendAndWindow()
   })
+}
+
+app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return
+  await bootstrap()
 })
 
 app.on('window-all-closed', () => {
-  if (!process.env.BACKEND_MANAGED) {
-    stopBackend()
-    stopVite()
-  }
+  stopVite()
   if (process.platform !== 'darwin') {
     app.quit()
+    return
   }
+  if (quitRequested) return
+  // macOS 关闭全部窗口后保留应用：后端已随窗口关闭停止，再次激活时重新启动。
+  lifecycle.resetForRestart()
+  backend.reset()
 })
 
-app.on('before-quit', () => {
-  if (!process.env.BACKEND_MANAGED) {
-    stopBackend()
+app.on('before-quit', (event) => {
+  if (lifecycle.stopped) {
     stopVite()
+    return
   }
+  event.preventDefault()
+  if (lifecycle.stopping) return
+  void lifecycle.prepareClose(mainWindow, 'quit').then((decision) => {
+    // 用户选择留下时不标记退出：否则之后关闭窗口将不再恢复可重启状态。
+    if (!decision.ok) return
+    quitRequested = true
+    stopVite()
+    const install = lifecycle.takeAfterStop()
+    if (install) {
+      // 安装动作自行结束应用；此处不再触发第二次退出。
+      install()
+      return
+    }
+    app.quit()
+  })
 })

@@ -28,9 +28,19 @@ function resolveDataDir(): string {
   return path.resolve(path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), APP_DATA_DIR_NAME))
 }
 
+/**
+ * 读取凭据文件中属于本次后端实例的 token。
+ * 该文件是包含 instance_id/launch_id/token 的 JSON 身份包，不是裸字符串。
+ */
 function readControlToken(): string {
   try {
-    return readFileSync(path.join(resolveDataDir(), 'runtime', 'control-token'), 'utf-8').trim()
+    const raw = readFileSync(path.join(resolveDataDir(), 'runtime', 'control-token'), 'utf-8')
+    const bundle: unknown = JSON.parse(raw)
+    if (typeof bundle === 'object' && bundle !== null) {
+      const token = (bundle as { token?: unknown }).token
+      if (typeof token === 'string') return token
+    }
+    return ''
   } catch {
     return ''
   }

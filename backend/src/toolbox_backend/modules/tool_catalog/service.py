@@ -3,6 +3,7 @@
 from toolbox_backend.core.capabilities import (
     CAPABILITY_ID_PHOTO,
     CAPABILITY_LIBREOFFICE,
+    CAPABILITY_USB_TRANSFER,
     capabilities,
 )
 from toolbox_backend.modules.tool_catalog.schemas import ToolListItem
@@ -131,5 +132,22 @@ def get_tool_list() -> list[ToolListItem]:
         ),
     )
     result.append(word_tool)
+
+    # 有线传输只按平台判定可用性：macOS 上即使运行依赖缺失也允许进入页面，
+    # 由页面展示依赖状态，避免入口被永久隐藏而无法自查。
+    usb_transfer_status = capabilities.get(CAPABILITY_USB_TRANSFER)
+    usb_transfer_tool = ToolListItem(
+        id="usb-transfer",
+        name="UsbTransfer",
+        path="usb-transfer",
+        display_name="有线传输",
+        description="用数据线连接 MTP 设备，浏览目录并双向复制文件与文件夹",
+        icon="fas fa-plug",
+        available=usb_transfer_status.available,
+        unavailable_reason=(
+            None if usb_transfer_status.available else usb_transfer_status.reason
+        ),
+    )
+    result.append(usb_transfer_tool)
 
     return result

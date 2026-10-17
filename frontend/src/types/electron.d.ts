@@ -29,11 +29,11 @@ interface UpdaterApi {
   onStatus: (callback: (status: UpdateStatus) => void) => () => void
 }
 
-/** 本地文件选择：桌面端读取磁盘路径，供后端直接访问同目录资源 */
+/** 共享本机选择能力：返回路径及选择结果，实际文件访问由具体业务后端校验 */
 interface FileDialogApi {
-  /** 局域网投送用的多选对话框，返回文件绝对路径 */
+  /** 多业务共用的文件多选对话框，返回绝对路径及文件元信息 */
   pickFiles: () => Promise<Array<{ path: string; name: string; size: number }>>
-  /** 接收目录选择，返回绝对路径；取消时为空字符串 */
+  /** 选择本机来源或目标目录，返回绝对路径；取消时为空字符串 */
   pickDirectory: () => Promise<string>
   pickMarkdown: () => Promise<{ path: string; name: string; size: number } | null>
   getPathForFile: (file: File) => string

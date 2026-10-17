@@ -1,6 +1,8 @@
 """管理应用配置与用户数据目录解析。"""
+import ctypes.util
 import os
 import sys
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -27,6 +29,15 @@ def _default_data_root() -> str:
 
 DEFAULT_DATA_ROOT = _default_data_root()
 
+# 有线传输：libmtp 随包资源位置，以及开发态常见安装位置；仅做路径解析，不加载库。
+USB_TRANSFER_BUNDLED_LIBRARY = ("usb", "lib", "libmtp.dylib")
+DEV_MTP_LIBRARY_CANDIDATES = (
+    "/opt/homebrew/opt/libmtp/lib/libmtp.dylib",
+    "/opt/homebrew/lib/libmtp.dylib",
+    "/usr/local/opt/libmtp/lib/libmtp.dylib",
+    "/usr/local/lib/libmtp.dylib",
+)
+
 
 class Settings(BaseSettings):
     API_HOST: str = "127.0.0.1"
@@ -38,6 +49,8 @@ class Settings(BaseSettings):
     ID_PHOTO_MODEL_PATH: str = ""
     LIBREOFFICE_PATH: str = ""
     TOOLBOX_DATA_DIR: str = ""
+    TOOLBOX_LAUNCH_ID: str = ""
+    APP_SHUTDOWN_TIMEOUT_SECONDS: float = Field(30.0, ge=5, le=120)
     # 局域网投送：仅在用户显式开启会话期间监听，默认首选端口避开控制面 18740。
     LAN_TRANSFER_HOST: str = "0.0.0.0"
     LAN_TRANSFER_PORT: int = 18751
@@ -57,6 +70,20 @@ class Settings(BaseSettings):
     LAN_TRANSFER_MAX_RECEIVE_RECORDS: int = 100
     # 留空时按用户下载目录下的子目录接收，阶段四再做可配置界面。
     LAN_TRANSFER_RECEIVE_DIR: str = ""
+    # 有线传输：显式指定 libmtp 动态库路径，留空时按随包资源与系统位置解析。
+    USB_TRANSFER_LIBRARY_PATH: str = ""
+    # USB 的预算独立于 LAN 和通用临时任务；到达上限时拒绝，不静默丢弃异常记录。
+    USB_TRANSFER_MAX_QUEUE: int = Field(20, ge=1, le=100)
+    USB_TRANSFER_MAX_RECORDS: int = Field(100, ge=1, le=1000)
+    USB_TRANSFER_MAX_ENTRIES: int = Field(10000, ge=100, le=100000)
+    USB_TRANSFER_MAX_DEPTH: int = Field(64, ge=1, le=128)
+    USB_TRANSFER_MAX_MESSAGE_BYTES: int = Field(262144, ge=65536, le=1048576)
+    USB_TRANSFER_MAX_RECORD_BYTES: int = Field(67108864, ge=1048576, le=268435456)
+    # 同时用于提交凭据有效期和当前实例完成记录的保留条件；历史记录回收由任务管理器判定。
+    USB_TRANSFER_SUBMISSION_TTL: int = Field(1800, ge=60, le=86400)
+    USB_TRANSFER_METADATA_TIMEOUT: float = Field(60.0, ge=5, le=600)
+    USB_TRANSFER_STALL_TIMEOUT: float = Field(120.0, ge=10, le=3600)
+    USB_TRANSFER_CANCEL_GRACE: float = Field(8.0, ge=1, le=60)
 
     ROOT_PATH: str = _runtime_root()
 
@@ -66,6 +93,11 @@ class Settings(BaseSettings):
         if self.TOOLBOX_DATA_DIR:
             return os.path.abspath(self.TOOLBOX_DATA_DIR)
         return DEFAULT_DATA_ROOT
+
+    @property
+    def ownership_lock_path(self) -> str:
+        """固定用户作用域的协调锁；不能随业务数据根变化而允许并行实例。"""
+        return os.path.join(DEFAULT_DATA_ROOT, "runtime", "backend.lock")
 
     @property
     def runtime_dir(self) -> str:
@@ -92,6 +124,42 @@ class Settings(BaseSettings):
         else:
             downloads = os.environ.get("XDG_DOWNLOAD_DIR") or os.path.join(home, "Downloads")
         return os.path.join(downloads, "工具盒子")
+
+    @property
+    def usb_transfer_root(self) -> str:
+        """返回 USB 状态目录；不存放传输内容，不参与通用临时清理。"""
+        return os.path.join(self.data_root, "usb_transfer")
+
+    @property
+    def usb_transfer_library_path(self) -> str | None:
+        """解析 libmtp 动态库路径：显式配置 → 随包资源 → 仅源码态的常见位置。
+
+        只返回实际存在的路径，不加载库；找不到时返回 None，由调用方转换为
+        “运行依赖不可用”状态，避免在 API 进程里 dlopen 原生库。
+        """
+        if self.USB_TRANSFER_LIBRARY_PATH:
+            configured = self._resolve_path(self.USB_TRANSFER_LIBRARY_PATH, self.data_root)
+            return configured if os.path.exists(configured) else None
+
+        bundled = os.path.join(self.ROOT_PATH, "resources", *USB_TRANSFER_BUNDLED_LIBRARY)
+        if os.path.exists(bundled):
+            return bundled
+        # 打包产物缺依赖时明确失败，不借用用户机器上未知 ABI 的 Homebrew 库。
+        if getattr(sys, "frozen", False):
+            return None
+
+        for candidate in DEV_MTP_LIBRARY_CANDIDATES:
+            if os.path.exists(candidate):
+                return candidate
+
+        try:
+            found = ctypes.util.find_library("mtp")
+        except (OSError, TypeError):
+            # 系统库探测在少数环境下会失败，按“未安装”处理。
+            return None
+        if found and os.path.exists(found):
+            return found
+        return None
 
     @staticmethod
     def _resolve_path(value: str, base: str) -> str:

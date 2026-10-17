@@ -8,6 +8,7 @@
     "compile:electron": "tsc -p electron/tsconfig.json",
     "build:frontend": "npm --prefix frontend run build",
     "build:backend": "node scripts/build-backend-runtime.js",
+    "build:usb-native": "node scripts/build-usb-native.js",
     "build:release": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --publish never",
     "dist:mac": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --mac --arm64 --publish never",
     "dist:win": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --win --x64 --publish never",
@@ -55,7 +56,9 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "minimumSystemVersion": "14.0",
+      "sign": "./scripts/sign-macos.js"
     },
     "win": {
       "artifactName": "toolbox-${version}-${os}-${arch}.${ext}",

@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
+// Electron 主进程自行启动后端与 Vite，因此这里不再声明 webServer，
+// 否则会与 Electron 管理的服务争用端口和后端应用锁。
 export default defineConfig({
   testDir: './tests',
   testMatch: 'electron.spec.ts',
@@ -12,16 +14,4 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
-  webServer: [
-    {
-      command: 'npm run dev',
-      url: 'http://127.0.0.1:5173',
-      reuseExistingServer: true,
-    },
-    {
-      command: 'cd ../backend && uv run uvicorn toolbox_backend.main:app --app-dir src --host 127.0.0.1 --port 18740',
-      url: 'http://127.0.0.1:18740/docs',
-      reuseExistingServer: true,
-    },
-  ],
 })

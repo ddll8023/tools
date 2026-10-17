@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from toolbox_backend.api.v1.health import router as health_router
+from toolbox_backend.api.v1.runtime import router as runtime_router
 from toolbox_backend.api.v1.settings import router as settings_router
 from toolbox_backend.modules.epub_to_markdown.router import router as epub_to_markdown_router
 from toolbox_backend.modules.id_photo.router import router as id_photo_router
@@ -14,10 +15,12 @@ from toolbox_backend.modules.markdown_to_word.router import router as markdown_t
 from toolbox_backend.modules.pdf_to_markdown.router import router as pdf_to_markdown_router
 from toolbox_backend.modules.pdf_to_word.router import router as pdf_to_word_router
 from toolbox_backend.modules.qr_code.router import router as qr_code_router
+from toolbox_backend.modules.usb_transfer.router import router as usb_transfer_router
 from toolbox_backend.modules.word_to_pdf.router import router as word_to_pdf_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(health_router)
+router.include_router(runtime_router)
 router.include_router(tools_list_router)
 router.include_router(pdf_to_markdown_router)
 router.include_router(word_to_pdf_router)
@@ -30,3 +33,4 @@ router.include_router(qr_code_router)
 router.include_router(id_photo_router)
 router.include_router(settings_router)
 router.include_router(lan_transfer_router)
+router.include_router(usb_transfer_router)

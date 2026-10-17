@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater'
+import type { AppLifecycle } from './app-lifecycle'
 import * as macUpdater from './mac-updater'
 import { broadcast, getCurrentStatus } from './update-state'
 import type { UpdateCommandResult, UpdateStatus } from './update-types'
@@ -9,6 +10,12 @@ const isMacCustom = process.platform === 'darwin'
 
 let initialized = false
 let checkPromise: Promise<UpdateCommandResult> | null = null
+let lifecycle: AppLifecycle | null = null
+
+/** 由主进程注入退出协调器；未注入时拒绝安装，不绕过传输停止。 */
+export function setLifecycle(value: AppLifecycle) {
+  lifecycle = value
+}
 
 function versionOf(info: UpdateInfo | UpdateDownloadedEvent): string {
   return info.version || '新版本'
@@ -28,16 +35,43 @@ function handleUpdaterError(error: Error) {
 
 export function registerUpdaterIpc() {
   ipcMain.handle('updater:check', () => checkForUpdates())
-  ipcMain.handle('updater:quit-and-install', () => {
-    if (isMacCustom) {
-      return macUpdater.quitAndInstall()
+  // 显式安装也先走退出协调：Windows 的 quitAndInstall 会在内部先启动安装器。
+  ipcMain.handle('updater:quit-and-install', async (): Promise<UpdateCommandResult> => {
+    if (!lifecycle) {
+      return { ok: false, error: '退出协调未就绪，暂不能安装更新' }
     }
-    if (!app.isPackaged || !autoUpdater.isUpdaterActive()) {
-      return { ok: false, error: '当前没有可安装的更新' } satisfies UpdateCommandResult
+    if (isMacCustom) {
+      if (getCurrentStatus().state !== 'downloaded') {
+        return { ok: false, error: '当前没有可安装的更新' }
+      }
+      const window = BrowserWindow.getAllWindows()[0] ?? null
+      const decision = await lifecycle.prepareInstall(window, () => {
+        void macUpdater.installOnQuit().then((result) => {
+          if (result.ok) {
+            // helper 已在等待本进程退出；现在才真正结束应用。
+            app.quit()
+            return
+          }
+          // 安装器未启动时不结束应用，保留当前状态供用户重试。
+          broadcast({ state: 'error', message: result.error ?? '无法启动更新安装器' })
+        })
+      })
+      if (!decision.ok) return { ok: false, error: '已取消安装：有线传输未停止' }
+      // 停止已确认：立即执行已登记的安装动作，不依赖退出事件是否再次到达。
+      lifecycle.takeAfterStop()?.()
+      return { ok: true }
     }
 
-    autoUpdater.quitAndInstall()
-    return { ok: true } satisfies UpdateCommandResult
+    if (!app.isPackaged || !autoUpdater.isUpdaterActive()) {
+      return { ok: false, error: '当前没有可安装的更新' }
+    }
+    const window = BrowserWindow.getAllWindows()[0] ?? null
+    const decision = await lifecycle.prepareInstall(window, () => {
+      autoUpdater.quitAndInstall()
+    })
+    if (!decision.ok) return { ok: false, error: '已取消安装：有线传输未停止' }
+    lifecycle.takeAfterStop()?.()
+    return { ok: true }
   })
 }
 
@@ -54,8 +88,11 @@ export function initializeUpdater() {
   // macOS：免签名自定义更新器（未签名产物无法通过 Squirrel.Mac 的代码签名校验）
   if (isMacCustom) {
     macUpdater.initializeMacUpdater()
+    // 第二次 before-quit 才表示停止已确认；此时才允许退出即安装。
     app.on('before-quit', () => {
-      macUpdater.maybeInstallOnQuit()
+      if (lifecycle?.stopped) {
+        void macUpdater.installOnQuit()
+      }
     })
     return
   }

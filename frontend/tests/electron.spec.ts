@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
+import * as os from 'os'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -7,6 +8,8 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const BASE_URL = 'http://127.0.0.1:5173'
+// 后端、Vite 均由 Electron 主进程管理；测试只使用独立数据根，不触碰开发数据。
+const E2E_DATA_DIR = path.join(os.tmpdir(), 'toolbox-electron-e2e')
 
 let app: ElectronApplication
 let page: Page
@@ -17,7 +20,7 @@ test.beforeAll(async () => {
     args: [mainJs, '--no-sandbox'],
     env: {
       ...process.env,
-      BACKEND_MANAGED: '1',
+      TOOLBOX_DATA_DIR: E2E_DATA_DIR,
       ComSpec: process.env.ComSpec || 'C:\\WINDOWS\\system32\\cmd.exe'
     }
   })

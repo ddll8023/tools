@@ -3,19 +3,20 @@
  *
  * 未配置 Apple Developer ID 证书时，Squirrel.Mac/electron-updater 会在
  * “重启安装”阶段因代码签名校验失败而拒绝未签名产物，因此 macOS 平台
- * 走独立更新链路：GitHub Releases API 检查 → HTTPS 流式下载 ZIP 并
- * 校验 SHA-512 → 由 update-helper（ELECTRON_RUN_AS_NODE 运行的纯 Node
- * 脚本）完成解压、校验、原子替换与重启。
+ * 走独立更新链路：GitHub Releases API 检查 → 仅 HTTPS 流式下载 ZIP 并
+ * 强制校验 SHA-512 → 由 update-helper（ELECTRON_RUN_AS_NODE 运行的纯 Node
+ * 脚本）完成解压、校验、替换与重启。
  *
- * Windows/Linux 仍使用 electron-updater，见 updater.ts。
+ * 安装入口只在退出协调确认停止后启动；本模块不自行触发退出。
+ * 哈希与 BundleId 校验不是发布者签名保证。
  */
 import { app } from 'electron'
 import { spawn } from 'child_process'
 import * as crypto from 'crypto'
 import * as fs from 'fs'
-import * as http from 'http'
 import * as https from 'https'
 import * as path from 'path'
+import type { IncomingHttpHeaders } from 'http'
 import { broadcast, getCurrentStatus } from './update-state'
 import type { UpdateCommandResult } from './update-types'
 
@@ -38,8 +39,8 @@ interface PendingUpdate {
   version: string
   zipName: string
   downloadUrl: string
-  sha512?: string
-  sha512Source: 'latest-mac.yml' | 'none'
+  /** 缺失或格式异常时拒绝安装，不再降级为仅 HTTPS 完整性。 */
+  sha512: string
 }
 
 let initialized = false
@@ -71,12 +72,15 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
-/** 带重定向跟随的 GET 请求（GitHub 资产下载会 302 到对象存储） */
+/** 带重定向跟随的 GET 请求；只接受 HTTPS，任何非 HTTPS 目标直接拒绝。 */
 function get(url: string): Promise<{ status: number; body: Buffer }> {
   return new Promise((resolve, reject) => {
     const follow = (target: string, redirects: number) => {
-      const client = target.startsWith('https:') ? https : http
-      const request = client.get(target, { headers: { 'User-Agent': 'toolbox-desktop-updater' } }, (response) => {
+      if (!target.startsWith('https://')) {
+        reject(new Error(`拒绝非 HTTPS 地址: ${target}`))
+        return
+      }
+      const request = https.get(target, { headers: { 'User-Agent': 'toolbox-desktop-updater' } }, (response) => {
         const status = response.statusCode ?? 0
         const location = response.headers.location
         if (status >= 300 && status < 400 && location) {
@@ -107,11 +111,14 @@ function get(url: string): Promise<{ status: number; body: Buffer }> {
 function streamDownload(
   url: string,
   onChunk: (chunk: Buffer, total: number) => void,
-): Promise<{ status: number; headers: http.IncomingHttpHeaders }> {
+): Promise<{ status: number; headers: IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const follow = (target: string, redirects: number) => {
-      const client = target.startsWith('https:') ? https : http
-      const request = client.get(target, { headers: { 'User-Agent': 'toolbox-desktop-updater' } }, (response) => {
+      if (!target.startsWith('https://')) {
+        reject(new Error(`拒绝非 HTTPS 下载地址: ${target}`))
+        return
+      }
+      const request = https.get(target, { headers: { 'User-Agent': 'toolbox-desktop-updater' } }, (response) => {
         const status = response.statusCode ?? 0
         const location = response.headers.location
         if (status >= 300 && status < 400 && location) {
@@ -187,25 +194,19 @@ function parseSha512FromMeta(ymlText: string, zipName: string): string | undefin
   return undefined
 }
 
-async function resolveSha512(pending: PendingUpdate): Promise<void> {
+/** 解析 latest-mac.yml 中的 SHA-512；取不到时拒绝安装，不再降级继续。 */
+async function resolveSha512(pending: PendingUpdate): Promise<string> {
   try {
     const metaUrl = `${RELEASE_DOWNLOAD}/v${pending.version}/latest-mac.yml`
     const response = await get(metaUrl)
     if (response.status === 200) {
       const sha512 = parseSha512FromMeta(response.body.toString('utf8'), pending.zipName)
-      if (sha512) {
-        pending.sha512 = sha512
-        pending.sha512Source = 'latest-mac.yml'
-        return
-      }
+      if (sha512) return sha512
     }
   } catch (error) {
     console.warn('[mac-updater] 获取 latest-mac.yml 失败:', error instanceof Error ? error.message : error)
   }
-  // 取不到校验和：降级为仅 HTTPS 完整性，并记录原因
-  pending.sha512 = undefined
-  pending.sha512Source = 'none'
-  console.warn('[mac-updater] 未取得 SHA-512 校验和（latest-mac.yml 缺失或格式异常），降级为仅 HTTPS 完整性校验')
+  throw new Error('未取得 SHA-512 校验和，已停止安装')
 }
 
 function cleanExpiredFiles() {
@@ -265,96 +266,141 @@ async function downloadUpdate(pending: PendingUpdate): Promise<boolean> {
   let fd: number | null = null
   try {
     fd = fs.openSync(tmpPath, 'w')
-  } catch (error) {
+  } catch {
     broadcast({ state: 'error', message: '无法创建更新包文件' })
     return false
   }
 
-  const response = await streamDownload(pending.downloadUrl, (chunk, total) => {
-    received += chunk.length
-    hash.update(chunk)
-    fs.writeSync(fd as number, chunk)
-    const now = Date.now()
-    const elapsed = (now - lastChunkTime) / 1000
-    if (elapsed >= 1) {
-      bytesPerSecond = Math.round((received - lastChunkBytes) / elapsed)
-      lastChunkTime = now
-      lastChunkBytes = received
-    }
-    // 节流广播，避免高频 IPC 影响下载性能
-    if (now - lastBroadcastTime >= 200 || received === 0) {
-      lastBroadcastTime = now
-      const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((received / total) * 100))) : 0
-      broadcast({ state: 'downloading', version: pending.version, percent, bytesPerSecond })
-    }
-  })
-
-  if (fd !== null) {
-    fs.closeSync(fd)
-    fd = null
-  }
-  if (response.status !== 200) {
-    fs.rmSync(tmpPath, { force: true })
+  let response: { status: number; headers: IncomingHttpHeaders }
+  try {
+    response = await streamDownload(pending.downloadUrl, (chunk, total) => {
+      received += chunk.length
+      hash.update(chunk)
+      fs.writeSync(fd as number, chunk)
+      const now = Date.now()
+      const elapsed = (now - lastChunkTime) / 1000
+      if (elapsed >= 1) {
+        bytesPerSecond = Math.round((received - lastChunkBytes) / elapsed)
+        lastChunkTime = now
+        lastChunkBytes = received
+      }
+      // 节流广播，避免高频 IPC 影响下载性能
+      if (now - lastBroadcastTime >= 200 || received === 0) {
+        lastBroadcastTime = now
+        const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((received / total) * 100))) : 0
+        broadcast({ state: 'downloading', version: pending.version, percent, bytesPerSecond })
+      }
+    })
+  } catch (error) {
+    // 下载异常同样要收尾：关闭描述符、删除本次临时文件，不留半个包。
+    console.error('[mac-updater] 更新包下载异常:', error instanceof Error ? error.message : error)
     broadcast({ state: 'error', message: '更新包下载失败' })
     return false
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // 已关闭
+      }
+      fd = null
+    }
   }
-  if (received === 0) {
+
+  if (response.status !== 200 || received === 0) {
     fs.rmSync(tmpPath, { force: true })
-    broadcast({ state: 'error', message: '更新包内容为空' })
+    broadcast({ state: 'error', message: response.status !== 200 ? '更新包下载失败' : '更新包内容为空' })
     return false
   }
 
-  // 校验 SHA-512（仅在元数据可用时）
-  if (pending.sha512) {
-    const actual = hash.digest('base64')
-    if (actual !== pending.sha512) {
-      console.error(`[mac-updater] SHA-512 校验失败: 期望 ${pending.sha512}，实际 ${actual}`)
-      broadcast({ state: 'error', message: '更新包校验失败，已停止安装' })
-      fs.rmSync(tmpPath, { force: true })
-      return false
-    }
-    console.log('[mac-updater] SHA-512 校验通过')
+  const actual = hash.digest('base64')
+  if (actual !== pending.sha512) {
+    console.error(`[mac-updater] SHA-512 校验失败: 期望 ${pending.sha512}，实际 ${actual}`)
+    broadcast({ state: 'error', message: '更新包校验失败，已停止安装' })
+    fs.rmSync(tmpPath, { force: true })
+    return false
   }
+  console.log('[mac-updater] SHA-512 校验通过')
 
   fs.renameSync(tmpPath, zipPath)
   broadcast({ state: 'downloaded', version: pending.version })
   return true
 }
 
-function spawnHelper() {
+/**
+ * 启动安装 helper 并等待其启动应答。
+ * 脚本路径必须进入参数：只传 ELECTRON_RUN_AS_NODE 会让 Electron 启动失败。
+ */
+async function spawnHelper(): Promise<{ ok: boolean; error?: string }> {
   const helperPath = path.join(process.resourcesPath, HELPER_NAME)
   if (!fs.existsSync(helperPath)) {
-    broadcast({ state: 'error', message: '更新安装器缺失，无法安装' })
-    return false
+    return { ok: false, error: '更新安装器缺失，无法安装' }
   }
-  const appRoot = path.resolve(path.dirname(process.execPath), '..', '..')
   const pending = pendingUpdate
-  if (!pending) return false
-  const zipPath = path.join(UPDATE_DIR(), pending.zipName)
+  if (!pending) return { ok: false, error: '没有待安装的更新' }
+  const appRoot = path.resolve(path.dirname(process.execPath), '..', '..')
   const args = [
-    '--zip', zipPath,
+    helperPath,
+    '--zip', path.join(UPDATE_DIR(), pending.zipName),
     '--target', appRoot,
     '--version', pending.version,
     '--result', RESULT_FILE(),
     '--wait-pid', String(process.pid),
+    '--sha512', pending.sha512,
+    '--data-root', app.getPath('userData'),
   ]
-  installing = true
-  const child = spawn(process.execPath, args, {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  let child: ReturnType<typeof spawn>
+  try {
+    child = spawn(process.execPath, args, {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    })
+  } catch (error) {
+    return { ok: false, error: `无法启动更新安装器: ${error instanceof Error ? error.message : String(error)}` }
+  }
+
+  // 等到 helper 真正开始执行才允许退出，避免安装器根本没运行就关闭应用。
+  const started = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    let settled = false
+    const finish = (value: { ok: boolean; error?: string }) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish({ ok: false, error: '更新安装器启动应答超时' }), 15000)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (chunk.toString('utf8').includes('"started"')) finish({ ok: true })
+    })
+    child.on('error', (error) => finish({ ok: false, error: `更新安装器启动失败: ${error.message}` }))
+    child.on('exit', (code) => finish({ ok: false, error: `更新安装器提前退出（code=${code}）` }))
   })
+
+  if (!started.ok) {
+    try {
+      child.kill()
+    } catch {
+      // 已退出
+    }
+    return started
+  }
+  child.stdout?.removeAllListeners()
+  child.stdout?.destroy()
   child.unref()
+  installing = true
   console.log(`[mac-updater] 已启动安装 helper，准备安装 ${pending.version}`)
-  return true
+  return { ok: true }
 }
 
-/** 用户退出应用时自动安装已下载的版本（对应 electron-updater 的 autoInstallOnAppQuit） */
-export function maybeInstallOnQuit() {
-  if (installing || process.platform !== 'darwin') return
-  const status = getCurrentStatus()
-  if (status.state !== 'downloaded') return
-  spawnHelper()
+/** 退出协调确认停止后安装已下载的版本（对应 electron-updater 的 autoInstallOnAppQuit）。 */
+export async function installOnQuit(): Promise<{ ok: boolean; error?: string }> {
+  if (process.platform !== 'darwin') return { ok: false, error: '仅 macOS 使用该安装路径' }
+  if (installing) return { ok: true }
+  if (getCurrentStatus().state !== 'downloaded') return { ok: false, error: '当前没有可安装的更新' }
+  const result = await spawnHelper()
+  if (!result.ok) broadcast({ state: 'error', message: result.error ?? '无法启动更新安装器' })
+  return result
 }
 
 export function checkForUpdates(): Promise<UpdateCommandResult> {
@@ -378,14 +424,19 @@ export function checkForUpdates(): Promise<UpdateCommandResult> {
         return { ok: true }
       }
 
+      const sha512 = await resolveSha512({
+        version: latest.version,
+        zipName: asset.name,
+        downloadUrl: asset.url,
+        sha512: '',
+      })
       const pending: PendingUpdate = {
         version: latest.version,
         zipName: asset.name,
         downloadUrl: asset.url,
-        sha512Source: 'none',
+        sha512,
       }
       pendingUpdate = pending
-      await resolveSha512(pending)
       broadcast({ state: 'available', version: pending.version })
 
       const downloaded = await downloadUpdate(pending)
@@ -401,17 +452,6 @@ export function checkForUpdates(): Promise<UpdateCommandResult> {
     checkPromise = null
   })
   return checkPromise
-}
-
-export function quitAndInstall(): UpdateCommandResult {
-  if (getCurrentStatus().state !== 'downloaded' || !pendingUpdate) {
-    return { ok: false, error: '当前没有可安装的更新' }
-  }
-  if (!spawnHelper()) {
-    return { ok: false, error: '无法启动更新安装器' }
-  }
-  app.quit()
-  return { ok: true }
 }
 
 export function initializeMacUpdater() {

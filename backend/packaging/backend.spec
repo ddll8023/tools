@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import json
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -32,7 +36,29 @@ for package_name in ("mineru", "modelscope", "mtcnnruntime"):
 
 resource_dir = BACKEND_ROOT / "resources"
 if resource_dir.is_dir():
-    datas.append((str(resource_dir), "resources"))
+    # 通用资源整体收集，但排除 usb 子树：USB 原生库只从构建暂存目录按平台收集，
+    # 避免本机残留或跨平台资源混入产物。
+    staged_resources = Path(tempfile.mkdtemp(prefix="toolbox-resources-")) / "resources"
+    shutil.copytree(
+        resource_dir, staged_resources, symlinks=True, ignore=shutil.ignore_patterns("usb")
+    )
+    datas.append((str(staged_resources), "resources"))
+
+# USB 原生依赖：仅 macOS 产物收集，路径与 core/config.py 的随包约定一致。
+usb_native_dir = PROJECT_ROOT / "build" / "usb-native" / "dist"
+if sys.platform == "darwin":
+    manifest_path = usb_native_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise SystemExit(f"缺少 USB 原生依赖清单，未完成分发准备: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["libraries"]:
+        library = usb_native_dir / "lib" / entry["file"]
+        if not library.is_file():
+            raise SystemExit(f"缺少 USB 原生库: {library}")
+        binaries.append((str(library), "resources/usb/lib"))
+        datas.append((str(usb_native_dir / entry["license"]), "resources/usb/licenses"))
+    datas.append((str(usb_native_dir / manifest["notice"]), "resources/usb"))
+    datas.append((str(usb_native_dir / manifest["buildInfo"]), "resources/usb"))
 
 # 局域网投送的浏览器页面随应用分发，PyInstaller 不会自动收集包内非 .py 文件。
 lan_web_dir = BACKEND_ROOT / "src" / "toolbox_backend" / "modules" / "lan_transfer" / "web"

@@ -63,14 +63,14 @@ contextBridge.exposeInMainWorld('desktopApi', {
   // 控制面凭据：仅交给桌面渲染进程，不进入局域网链接、二维码或浏览器页面
   getControlToken: () => ipcRenderer.invoke('control:token') as Promise<string>,
 
-  // 本地文件选择：桌面端把磁盘路径交给后端，避免上传同目录图片资源
+  // 共享本机选择能力：返回路径及选择结果，实际文件访问由具体业务后端校验
   fileDialog: {
-    /** 局域网投送用的多选对话框，返回绝对路径 */
+    /** 多业务共用的文件多选对话框，返回绝对路径及文件元信息 */
     pickFiles: () =>
       ipcRenderer.invoke('dialog:pick-files') as Promise<
         Array<{ path: string; name: string; size: number }>
       >,
-    /** 接收目录选择，返回绝对路径；取消时为空字符串 */
+    /** 选择本机来源或目标目录，返回绝对路径；取消时为空字符串 */
     pickDirectory: () => ipcRenderer.invoke('dialog:pick-directory') as Promise<string>,
     pickMarkdown: () =>
       ipcRenderer.invoke('dialog:pick-markdown') as Promise<{

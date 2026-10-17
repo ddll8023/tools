@@ -11,6 +11,9 @@ import {
   faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
   faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper, faBook,
   faTriangleExclamation, faQrcode, faIdCard, faDiagramProject, faFolderOpen, faTowerBroadcast,
+  faPlug, faFolder,
+  // solid 与 regular 都有 file，solid 侧改别名避免与下方同名导入冲突。
+  faFile as faFileSolid,
 } from '@fortawesome/free-solid-svg-icons'
 
 import {
@@ -29,7 +32,7 @@ library.add(
   faWindowMinimize, faWindowMaximize, faWindowRestore, faXmark,
   faSliders, faWandMagicSparkles, faCheckCircle, faFileZipper, faBook,
   faTriangleExclamation, faFileImage, faQrcode, faIdCard, faDiagramProject, faFolderOpen,
-  faTowerBroadcast,
+  faTowerBroadcast, faPlug, faFolder, faFileSolid,
 )
 
 import '@/style.css'

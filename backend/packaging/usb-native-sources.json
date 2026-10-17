@@ -1,0 +1,27 @@
+{
+  "$comment": "USB 原生依赖的固定来源。摘要来自上游元数据与 Homebrew Formula 记录，尚未在本地下载核对；构建脚本会再次校验，不匹配即中止。",
+  "platform": "darwin",
+  "arch": "arm64",
+  "minimumMacosVersion": "14.0",
+  "mtpz": false,
+  "libraries": [
+    {
+      "name": "libmtp",
+      "version": "1.1.23",
+      "url": "https://downloads.sourceforge.net/project/libmtp/libmtp/1.1.23/libmtp-1.1.23.tar.gz",
+      "sha256": "74a2b6e8cb4a0304e95b995496ea3ac644c29371649b892b856e22f12a0bdeed",
+      "digestSource": "Homebrew homebrew-core Formula/lib/libmtp.rb @ ad3528e295beb2e10672c5fbca5d68e1d82787ed",
+      "configureArgs": ["--disable-mtpz", "--disable-static", "--enable-shared", "--disable-silent-rules"],
+      "bundledName": "libmtp.dylib"
+    },
+    {
+      "name": "libusb-1.0",
+      "version": "1.0.30",
+      "url": "https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2",
+      "sha256": "fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf",
+      "digestSource": "GitHub Release 资产 digest 与 Homebrew Formula/lib/libusb.rb 记录一致",
+      "configureArgs": ["--disable-static", "--enable-shared"],
+      "bundledName": null
+    }
+  ]
+}
