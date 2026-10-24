@@ -13,6 +13,14 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["main.ts", "preload.ts", "update-helper.ts"],
+  "include": [
+    "main.ts",
+    "preload.ts",
+    "update-helper.ts",
+    "markdown-to-pdf.ts",
+    "markdown-to-pdf-types.ts",
+    "markdown-source.ts",
+    "markdown-source-types.ts"
+  ],
   "exclude": []
 }

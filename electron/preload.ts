@@ -1,6 +1,8 @@
 /** 向应用页面暴露受限桌面 API，不公开通用 IPC 或磁盘写入能力。 */
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateCommandResult, UpdateStatus } from './update-types'
+import type { MarkdownPdfOptions, MarkdownPdfResult } from './markdown-to-pdf-types'
+import type { PreparedMarkdownPayload } from './markdown-source-types'
 
 /**
  * 应用版本：渲染进程不再提供 electron.app，改读应用包内的 package.json，
@@ -63,7 +65,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
   // 控制面凭据：仅交给桌面渲染进程，不进入局域网链接、二维码或浏览器页面
   getControlToken: () => ipcRenderer.invoke('control:token') as Promise<string>,
 
-  // 共享本机选择能力：返回路径及选择结果，实际文件访问由具体业务后端校验
+  // 共享本机选择能力：返回路径及选择结果；实际文件访问由后端或主进程按业务校验
   fileDialog: {
     /** 多业务共用的文件多选对话框，返回绝对路径及文件元信息 */
     pickFiles: () =>
@@ -102,6 +104,20 @@ contextBridge.exposeInMainWorld('desktopApi', {
     onMaximizeChange: (callback: (maximized: boolean) => void) => {
       ipcRenderer.on('window:maximize-changed', (_event, maximized) => callback(maximized))
     }
+  },
+
+  // 本地 Markdown 读取：由主进程解析同目录及 Obsidian 库根图片并转 Data URL
+  markdownSource: {
+    prepare: (path: string) =>
+      ipcRenderer.invoke('markdown-source:prepare', { path }) as Promise<PreparedMarkdownPayload>
+  },
+
+  // Markdown PDF 打印：离线沙箱窗口生成，由用户选择保存路径
+  markdownPdf: {
+    export: (payload: { requestId: string; filename: string; html: string; options: MarkdownPdfOptions }) =>
+      ipcRenderer.invoke('markdown-pdf:export', payload) as Promise<MarkdownPdfResult>,
+    cancel: (requestId: string) =>
+      ipcRenderer.invoke('markdown-pdf:cancel', requestId) as Promise<void>
   },
 
   updater: {

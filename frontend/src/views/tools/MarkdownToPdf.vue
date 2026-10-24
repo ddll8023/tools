@@ -1,25 +1,28 @@
-<!-- Markdown 转 PDF：复用 Markdown 来源选择器和 Word 排版链路，由 LibreOffice 生成 PDF。 -->
+<!-- Markdown 转 PDF：前端离线渲染公式与 SVG，再由桌面端打印为 PDF。 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { BaseSelect } from '@/components/common'
 import MarkdownSourcePicker from '@/features/markdown/components/MarkdownSourcePicker.vue'
 import type { MarkdownSource } from '@/features/markdown/source'
-import { convertMarkdownToPdf, downloadMarkdownToPdf } from '@/api/tools'
-import type { MarkdownToPdfConvertResponse } from '@/api/tools'
-import type { PdfOptions } from '@/features/markdown-pdf/types'
+import { buildPdfHtml, renderMarkdown } from '@/features/markdown-pdf/render'
+import { prepareMarkdownSource } from '@/features/markdown-pdf/prepare'
+import type { PdfDocument, PdfOptions } from '@/features/markdown-pdf/types'
 
-type Phase = 'idle' | 'ready' | 'progress' | 'result' | 'error'
+type Phase = 'idle' | 'ready' | 'progress' | 'preview' | 'error'
 const phase = ref<Phase>('idle')
 const source = ref<MarkdownSource | null>(null)
-const result = ref<MarkdownToPdfConvertResponse | null>(null)
+const renderedDoc = ref<PdfDocument | null>(null)
+const warnings = ref<string[]>([])
 const error = ref('')
 const notice = ref('')
+const exporting = ref(false)
 const options = reactive<PdfOptions>({
   landscape: false,
   marginMm: 18,
   fontSize: 11,
   pageNumbers: true,
 })
+const isDesktop = computed(() => Boolean(window.desktopApi?.markdownPdf))
 const direction = computed({
   get: () => options.landscape ? 'landscape' : 'portrait',
   set: (value: string) => { options.landscape = value === 'landscape' },
@@ -40,13 +43,19 @@ const validOptions = computed(() => (
   Number.isInteger(options.marginMm) && options.marginMm >= 10 && options.marginMm <= 30
   && Number.isInteger(options.fontSize) && options.fontSize >= 8 && options.fontSize <= 20
 ))
-const busy = computed(() => phase.value === 'progress')
+const busy = computed(() => phase.value === 'progress' || exporting.value)
+// 预览与打印共用同一份 HTML，改动排版参数即可看到与导出结果一致的效果。
+const previewSrcdoc = computed(() => (
+  renderedDoc.value ? buildPdfHtml(renderedDoc.value.previewHtml, options) : ''
+))
 let controller: AbortController | null = null
 let requestVersion = 0
+let requestId = ''
 
 function handleSource(value: MarkdownSource) {
   source.value = value
-  result.value = null
+  renderedDoc.value = null
+  warnings.value = []
   error.value = ''
   notice.value = ''
   phase.value = 'ready'
@@ -64,32 +73,62 @@ async function convert() {
   const currentController = new AbortController()
   controller = currentController
   const version = ++requestVersion
-  result.value = null
+  renderedDoc.value = null
+  warnings.value = []
   error.value = ''
   notice.value = ''
   phase.value = 'progress'
   try {
-    const converted = await convertMarkdownToPdf(selected, options, currentController.signal)
+    const prepared = await prepareMarkdownSource(selected)
+    const rendered = await renderMarkdown(prepared, currentController.signal)
     if (version !== requestVersion) return
-    result.value = converted
-    phase.value = 'result'
+    renderedDoc.value = rendered
+    warnings.value = [...prepared.warnings, ...rendered.warnings]
+    phase.value = 'preview'
   } catch (cause: unknown) {
     if (version !== requestVersion || currentController.signal.aborted) return
-    error.value = cause instanceof Error ? cause.message : '转换失败，请稍后重试'
+    error.value = cause instanceof Error ? cause.message : '文档渲染失败，请稍后重试'
     phase.value = 'error'
   } finally {
     if (version === requestVersion) controller = null
   }
 }
 
-async function download() {
-  if (!result.value) return
+/** 调用桌面端打印通道；用户取消保存不算失败。 */
+async function exportPdf() {
+  const rendered = renderedDoc.value
+  const selected = source.value
+  const api = window.desktopApi?.markdownPdf
+  if (!rendered || !selected || !api || busy.value) return
+  exporting.value = true
+  error.value = ''
+  notice.value = ''
+  requestId = crypto.randomUUID()
   try {
-    await downloadMarkdownToPdf(result.value.task_id)
-    notice.value = `已开始下载：${result.value.output_filename}`
-  } catch (cause: unknown) {
-    error.value = cause instanceof Error ? cause.message : '下载失败'
-    phase.value = 'error'
+    const result = await api.export({
+      requestId,
+      filename: selected.name,
+      html: buildPdfHtml(rendered.html, options),
+      options: { ...options },
+    })
+    if (result.status === 'saved') notice.value = `已保存：${result.filename}`
+    else if (result.status === 'cancelled') notice.value = '已取消保存'
+    else error.value = result.message
+  } catch {
+    error.value = 'PDF 导出失败，请检查目标目录权限后重试'
+  } finally {
+    exporting.value = false
+    requestId = ''
+  }
+}
+
+async function cancelExport() {
+  const api = window.desktopApi?.markdownPdf
+  if (!api || !requestId) return
+  try {
+    await api.cancel(requestId)
+  } catch {
+    error.value = '取消导出失败，请重试'
   }
 }
 
@@ -97,8 +136,10 @@ function reset() {
   requestVersion++
   controller?.abort()
   controller = null
+  if (requestId) void cancelExport()
   source.value = null
-  result.value = null
+  renderedDoc.value = null
+  warnings.value = []
   error.value = ''
   notice.value = ''
   phase.value = 'idle'
@@ -107,6 +148,7 @@ function reset() {
 onBeforeUnmount(() => {
   requestVersion++
   controller?.abort()
+  if (requestId) void cancelExport()
 })
 </script>
 
@@ -137,7 +179,7 @@ onBeforeUnmount(() => {
 
     <section v-if="source" class="border-border bg-surface rounded-2xl border p-6">
       <h2 class="mb-4 font-semibold">PDF 排版设置</h2>
-      <fieldset class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4" :disabled="busy || phase === 'result'">
+      <fieldset class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4" :disabled="busy">
         <div>
           <label for="pdf-direction" class="mb-2 block text-sm">纸张方向 · A4</label>
           <BaseSelect id="pdf-direction" v-model="direction" :options="directionOptions" block />
@@ -166,18 +208,37 @@ onBeforeUnmount(() => {
         </label>
       </fieldset>
       <p class="text-text-secondary mt-4 text-xs">
-        使用现有 Markdown 转 Word 排版后由 LibreOffice 生成 PDF，中文标题和图片沿用 Word 转换链路。
+        公式与 SVG 由应用内置的 MathJax 矢量渲染，图片按 Markdown 所在目录与 Obsidian 库根解析。
       </p>
-      <button
-        v-if="phase === 'ready' || phase === 'error'"
-        type="button"
-        class="bg-primary hover:bg-primary-dark focus-visible:outline-primary mt-5 rounded-lg px-5 py-2.5 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
-        :disabled="!validOptions"
-        @click="convert"
-      >
-        <font-awesome-icon :icon="['fas', 'file-pdf']" class="mr-1.5" aria-hidden="true" />
-        生成 PDF
-      </button>
+      <div class="mt-5 flex flex-wrap gap-3">
+        <button
+          v-if="phase === 'ready' || phase === 'error'"
+          type="button"
+          class="bg-primary hover:bg-primary-dark focus-visible:outline-primary rounded-lg px-5 py-2.5 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+          :disabled="!validOptions"
+          @click="convert"
+        >
+          <font-awesome-icon :icon="['fas', 'file-pdf']" class="mr-1.5" aria-hidden="true" />
+          生成预览
+        </button>
+        <button
+          v-if="phase === 'preview'"
+          type="button"
+          class="bg-primary hover:bg-primary-dark focus-visible:outline-primary rounded-lg px-5 py-2.5 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+          :disabled="busy || !validOptions || !isDesktop"
+          @click="exportPdf"
+        >
+          <font-awesome-icon :icon="['fas', 'download']" class="mr-1.5" aria-hidden="true" />
+          导出 PDF
+        </button>
+        <button
+          v-if="exporting"
+          type="button"
+          class="border-border hover:bg-hover rounded-lg border px-5 py-2.5 text-sm"
+          @click="cancelExport"
+        >取消导出</button>
+      </div>
+      <p v-if="!isDesktop" class="text-text-secondary mt-3 text-xs">PDF 导出仅在桌面应用中可用。</p>
     </section>
 
     <section
@@ -189,27 +250,21 @@ onBeforeUnmount(() => {
     >
       <p class="text-sm">
         <font-awesome-icon :icon="['fas', 'spinner']" spin class="text-primary mr-2" aria-hidden="true" />
-        正在生成 DOCX 并调用 LibreOffice 转换 PDF…
+        正在渲染公式与图片…
       </p>
       <button type="button" class="border-border rounded-lg border px-4 py-2 text-sm" @click="reset">取消</button>
     </section>
 
-    <section v-if="result" class="border-border bg-surface rounded-2xl border p-6">
-      <h2 class="mb-4 font-semibold">转换完成</h2>
-      <div class="mb-5 flex flex-wrap gap-3">
-        <button
-          type="button"
-          class="bg-primary hover:bg-primary-dark focus-visible:outline-primary rounded-lg px-5 py-2.5 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2"
-          @click="download"
-        >
-          <font-awesome-icon :icon="['fas', 'download']" class="mr-1.5" aria-hidden="true" />
-          下载 PDF
-        </button>
-        <button type="button" class="border-border hover:bg-hover rounded-lg border px-5 py-2.5 text-sm" @click="reset">重新选择</button>
-      </div>
-      <p class="text-text-secondary text-sm">{{ result.output_filename }}</p>
-      <ul v-if="result.warnings.length" class="text-text-secondary mt-4 list-disc space-y-1 pl-5 text-sm">
-        <li v-for="warning in result.warnings" :key="warning">{{ warning }}</li>
+    <section v-if="phase === 'preview'" class="border-border bg-surface rounded-2xl border p-6">
+      <h2 class="mb-4 font-semibold">预览</h2>
+      <iframe
+        :srcdoc="previewSrcdoc"
+        title="PDF 排版预览"
+        sandbox=""
+        class="border-border h-[70vh] w-full rounded-xl border"
+      />
+      <ul v-if="warnings.length" class="text-text-secondary mt-4 list-disc space-y-1 pl-5 text-sm">
+        <li v-for="warning in warnings" :key="warning">{{ warning }}</li>
       </ul>
     </section>
 
@@ -217,6 +272,8 @@ onBeforeUnmount(() => {
       <p class="text-error text-sm">{{ error }}</p>
     </section>
     <p v-if="notice" class="text-sm" role="status">{{ notice }}</p>
-    <footer class="text-text-secondary text-center text-xs">本地处理；PDF 使用已验证的 Markdown → Word → LibreOffice 链路。</footer>
+    <footer class="text-text-secondary text-center text-xs">
+      本地处理；公式与 SVG 由内置 MathJax 矢量渲染，PDF 由 Chromium 打印生成。
+    </footer>
   </main>
 </template>

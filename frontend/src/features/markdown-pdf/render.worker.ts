@@ -9,6 +9,17 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
+/**
+ * 判断围栏内容能否作为内联 SVG 图形嵌入。
+ * 含外部引用、脚本或事件属性的图形会在清洗后变成空白，直接降级为代码块更易诊断。
+ */
+function toSvgFigure(content: string): string | undefined {
+  const source = content.trim()
+  if (!/^<svg[\s>]/i.test(source)) return
+  if (/<(?:script|use|image|foreignObject)\b|\son[a-z]+\s*=|(?:xlink:)?href\s*=/i.test(source)) return
+  return `<figure class="svg-figure">${source}</figure>\n`
+}
+
 /** 扫描未转义的结束符，避免跨行吞掉普通金额或在代码中预处理公式。 */
 function inlineFormula(source: string): { raw: string; text: string } | undefined {
   if (!source.startsWith('$') || source.startsWith('$$') || /\s/.test(source[1] ?? ' ')) return
@@ -102,6 +113,11 @@ async function renderDocument(source: PreparedMarkdown): Promise<RenderedMarkdow
       },
       code({ text, lang }) {
         const language = (lang || '').split(/\s+/)[0]
+        if (language.toLowerCase() === 'svg') {
+          const figure = toSvgFigure(text)
+          if (figure) return figure
+          warnings.add('SVG 图包含外部引用或脚本，已按代码块显示')
+        }
         let code = escapeHtml(text)
         if (text.length <= 100_000 && language && hljs.getLanguage(language)) {
           try { code = hljs.highlight(text, { language, ignoreIllegals: true }).value } catch {

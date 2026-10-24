@@ -29,7 +29,29 @@ interface UpdaterApi {
   onStatus: (callback: (status: UpdateStatus) => void) => () => void
 }
 
-/** 共享本机选择能力：返回路径及选择结果，实际文件访问由具体业务后端校验 */
+/** Markdown PDF 打印选项，与主进程 printToPDF 参数一一对应 */
+interface MarkdownPdfOptions {
+  landscape: boolean
+  marginMm: number
+  fontSize: number
+  pageNumbers: boolean
+}
+
+type MarkdownPdfResult =
+  | { status: 'saved'; filename: string }
+  | { status: 'cancelled' }
+  | { status: 'error'; message: string }
+
+/** 主进程读回的本地 Markdown 与图片 Data URL；error 存在时其余字段为空 */
+interface PreparedMarkdownPayload {
+  filename: string
+  markdownContent: string
+  images: Record<string, string>
+  warnings: string[]
+  error?: string
+}
+
+/** 共享本机选择能力：返回路径及选择结果；实际文件访问由后端或主进程按业务校验 */
 interface FileDialogApi {
   /** 多业务共用的文件多选对话框，返回绝对路径及文件元信息 */
   pickFiles: () => Promise<Array<{ path: string; name: string; size: number }>>
@@ -52,6 +74,18 @@ interface DesktopApi {
   /** 控制面凭据，仅桌面外壳可提供；缺失时前端不得直连控制面 */
   getControlToken: () => Promise<string>
   fileDialog: FileDialogApi
+  markdownSource: {
+    prepare: (path: string) => Promise<PreparedMarkdownPayload>
+  }
+  markdownPdf: {
+    export: (payload: {
+      requestId: string
+      filename: string
+      html: string
+      options: MarkdownPdfOptions
+    }) => Promise<MarkdownPdfResult>
+    cancel: (requestId: string) => Promise<void>
+  }
   windowControls: WindowControls
   updater: UpdaterApi
 }

@@ -110,12 +110,9 @@ def get_tool_list() -> list[ToolListItem]:
         name="MarkdownToPdf",
         path="markdown-to-pdf",
         display_name="Markdown 转 PDF",
-        description="将 Markdown 按 Word 排版链路转换为 PDF，支持图片和中文内容",
+        description="将 Markdown 转换为 PDF，支持公式、SVG、图片和中文内容",
         icon="fas fa-file-pdf",
-        available=libreoffice_status.available,
-        unavailable_reason=(
-            None if libreoffice_status.available else libreoffice_status.reason
-        ),
+        available=True,
     )
     result.append(markdown_pdf_tool)
 

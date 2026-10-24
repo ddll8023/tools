@@ -4,8 +4,11 @@ import { statSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
+import { pathToFileURL } from 'url'
 import { AppLifecycle } from './app-lifecycle'
 import { BackendRuntime } from './backend-runtime'
+import { cancelMarkdownPdf, registerMarkdownPdfIpc } from './markdown-to-pdf'
+import { registerMarkdownSourceIpc } from './markdown-source'
 import {
   initializeUpdater,
   notifyUpdaterWindowReady,
@@ -182,7 +185,7 @@ function registerWindowIpc() {
     return result.filePaths[0]
   })
 
-  // 本地 Markdown 选择：返回绝对路径，后端据此读取同目录 images/ 资源
+  // 本地 Markdown 选择：返回绝对路径；Word 转换交后端读取，PDF 由主进程读取
   ipcMain.handle('dialog:pick-markdown', async () => {
     const options: Electron.OpenDialogOptions = {
       title: '选择 Markdown 文件',
@@ -332,6 +335,12 @@ async function ensureBackendAndWindow(): Promise<void> {
 async function bootstrap(): Promise<void> {
   registerWindowIpc()
   registerUpdaterIpc()
+  // PDF 打印与本地 Markdown 读取都只认主窗口主框架；打包态页面走 file:// 入口。
+  const trustedPageUrl = isDev
+    ? VITE_URL
+    : pathToFileURL(path.join(ROOT_DIR, 'frontend', 'dist', 'index.html')).href
+  registerMarkdownPdfIpc(() => mainWindow, trustedPageUrl)
+  registerMarkdownSourceIpc(() => mainWindow, trustedPageUrl)
   setLifecycle(lifecycle)
 
   try {
@@ -390,6 +399,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  // 打印窗口独立于主窗口，退出前必须一并中止，避免残留隐藏窗口。
+  cancelMarkdownPdf()
   if (lifecycle.stopped) {
     stopVite()
     return

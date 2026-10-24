@@ -10,7 +10,6 @@ from toolbox_backend.modules.id_photo.router import router as id_photo_router
 from toolbox_backend.modules.image_converter.router import router as image_converter_router
 from toolbox_backend.modules.lan_transfer.router import router as lan_transfer_router
 from toolbox_backend.modules.tool_catalog.router import router as tools_list_router
-from toolbox_backend.modules.markdown_to_pdf.router import router as markdown_to_pdf_router
 from toolbox_backend.modules.markdown_to_word.router import router as markdown_to_word_router
 from toolbox_backend.modules.pdf_to_markdown.router import router as pdf_to_markdown_router
 from toolbox_backend.modules.pdf_to_word.router import router as pdf_to_word_router
@@ -28,7 +27,6 @@ router.include_router(image_converter_router)
 router.include_router(epub_to_markdown_router)
 router.include_router(pdf_to_word_router)
 router.include_router(markdown_to_word_router)
-router.include_router(markdown_to_pdf_router)
 router.include_router(qr_code_router)
 router.include_router(id_photo_router)
 router.include_router(settings_router)

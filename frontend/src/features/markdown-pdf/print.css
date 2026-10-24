@@ -37,6 +37,9 @@ hr { border: 0; border-top: 1px solid #ddd; margin: 1.5em 0; }
 .math-inline svg { display: inline-block; max-width: 100%; }
 .math-block { text-align: center; margin: 1em 0; break-inside: avoid; }
 .math-block svg { max-width: 100%; height: auto; max-height: var(--document-image-height, 235mm); }
+/* 围栏 SVG 图按整块排版，避免跨页拆分或超出正文宽度。 */
+.svg-figure { margin: 1em 0; text-align: center; break-inside: avoid; }
+.svg-figure svg { max-width: 100%; height: auto; max-height: var(--document-image-height, 235mm); }
 .math-error, .missing-image { color: #9e3b17; background: #fff3e8; white-space: pre-wrap; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #a626a4; }
 .hljs-string, .hljs-regexp, .hljs-addition { color: #397300; }
