@@ -208,7 +208,7 @@ onBeforeUnmount(() => {
         </label>
       </fieldset>
       <p class="text-text-secondary mt-4 text-xs">
-        公式与 SVG 由应用内置的 MathJax 矢量渲染，图片按 Markdown 所在目录与 Obsidian 库根解析。
+        公式与 SVG 由应用内置的 MathJax 矢量渲染，图片按 Markdown 所在目录与 Obsidian 库根解析，超出排版尺寸的图片会等比缩小后嵌入。
       </p>
       <div class="mt-5 flex flex-wrap gap-3">
         <button

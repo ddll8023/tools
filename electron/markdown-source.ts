@@ -1,8 +1,9 @@
 /**
  * 读取本地 Markdown 及其引用图片，把图片转成 Data URL 供渲染进程离线排版。
  * 支持单个 .md（按目录与 Obsidian 库根解析图片）和资源 ZIP（在内存中解包，不写盘）。
+ * 超长边图片在编码前等比缩小，并按 Data URL 字符总量限额，避免拼接阶段超出字符串上限。
  */
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { ipcMain, nativeImage, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { readFile, stat } from 'node:fs/promises'
 import * as path from 'node:path'
 import { inflateRawSync } from 'node:zlib'
@@ -10,7 +11,10 @@ import type { PreparedMarkdownPayload } from './markdown-source-types'
 
 const MAX_MARKDOWN_BYTES = 50 * 1024 * 1024
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
-const MAX_TOTAL_IMAGE_BYTES = 768 * 1024 * 1024
+// A4 纵向 18mm 边距下正文宽约 174mm，2400px 仍能提供约 350 DPI，同时显著压缩 Base64 体积。
+const MAX_IMAGE_EDGE_PX = 2400
+// V8 单个字符串上限约 512M 字符，而渲染链路上会同时存在多份同量级副本，故留出足够余量。
+const MAX_TOTAL_IMAGE_DATA_URL_CHARS = 320 * 1024 * 1024
 const MAX_ARCHIVE_MEMBERS = 4096
 const MAX_ARCHIVE_UNPACKED_BYTES = 1024 * 1024 * 1024
 // 与渲染进程的图片白名单保持一致：只嵌入浏览器可直接解码且不产生脚本执行的格式。
@@ -27,7 +31,34 @@ const IMAGE_PATTERN = /!\[[^\]]*\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+["'][^"']*["'])?\s
 
 /** 图片字节来源：磁盘目录或 ZIP 内存条目，两者只在取字节这一步不同。 */
 interface ImageSource {
-  load(relative: string, budget: { used: number }): Promise<{ data: Buffer } | { warning: string }>
+  load(relative: string): Promise<{ data: Buffer } | { warning: string }>
+}
+
+/** 把图片字节编码为 Data URL；最长边超限时先等比缩小，避免超大图直接撑爆后续拼接。 */
+function encodeImage(data: Buffer, extension: string): string {
+  const mime = IMAGE_MIME[extension]
+  const original = `data:${mime};base64,${data.toString('base64')}`
+  let image: ReturnType<typeof nativeImage.createFromBuffer>
+  try {
+    image = nativeImage.createFromBuffer(data)
+  } catch {
+    return original
+  }
+  if (image.isEmpty()) return original
+  const { width, height } = image.getSize()
+  const longest = Math.max(width, height)
+  if (longest <= MAX_IMAGE_EDGE_PX) return original
+  const scale = MAX_IMAGE_EDGE_PX / longest
+  const shrunk = image.resize({
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+    quality: 'best',
+  })
+  // nativeImage 只能输出 PNG 或 JPEG；webp 转 PNG 后 MIME 必须同步，否则渲染端白名单会拒绝。
+  const toPng = extension === '.png' || extension === '.webp'
+  const encoded = toPng ? shrunk.toPNG() : shrunk.toJPEG(88)
+  if (encoded.byteLength === 0) return original
+  return `data:${toPng ? 'image/png' : mime};base64,${encoded.toString('base64')}`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -101,7 +132,7 @@ function createDirectorySource(baseDir: string, vaultRoot: string): ImageSource 
   if (vaultRoot && !ancestors.includes(vaultRoot)) ancestors.push(vaultRoot)
 
   return {
-    async load(relative, budget) {
+    async load(relative) {
       for (const ancestor of ancestors) {
         const candidate = path.join(ancestor, relative)
         let size: number
@@ -113,12 +144,8 @@ function createDirectorySource(baseDir: string, vaultRoot: string): ImageSource 
           continue
         }
         if (size > MAX_IMAGE_BYTES) return { warning: `图片超过 20MB，已跳过: ${relative}` }
-        if (budget.used + size > MAX_TOTAL_IMAGE_BYTES) {
-          return { warning: '图片总量超过 768MB，请拆分文档' }
-        }
         try {
           const data = await readFile(candidate)
-          budget.used += data.byteLength
           return { data }
         } catch {
           return { warning: `图片无法读取: ${relative}` }
@@ -201,15 +228,11 @@ function createArchiveSource(
   }
 
   return {
-    async load(relative, budget) {
+    async load(relative) {
       for (const prefix of prefixes) {
         const data = entries.get(`${prefix}${relative}`)
         if (!data) continue
         if (data.byteLength > MAX_IMAGE_BYTES) return { warning: `图片超过 20MB，已跳过: ${relative}` }
-        if (budget.used + data.byteLength > MAX_TOTAL_IMAGE_BYTES) {
-          return { warning: '图片总量超过 768MB，请拆分文档' }
-        }
-        budget.used += data.byteLength
         return { data }
       }
       return { warning: `图片文件不存在: ${relative}` }
@@ -217,14 +240,17 @@ function createArchiveSource(
   }
 }
 
-/** 按 Markdown 文本中的图片引用收集 Data URL，缺失项转为警告而不是中断整篇文档。 */
+/**
+ * 按 Markdown 文本中的图片引用收集 Data URL。
+ * 单张图片缺失或格式不支持时降级为警告；累计字符数超限则整篇失败，避免产出缺图的 PDF。
+ */
 async function collectImages(
   markdownContent: string,
   source: ImageSource
 ): Promise<{ images: Record<string, string>; warnings: string[] }> {
   const images: Record<string, string> = {}
   const warnings = new Set<string>()
-  const budget = { used: 0 }
+  let usedChars = 0
   for (const match of markdownContent.matchAll(IMAGE_PATTERN)) {
     const raw = match[1].replace(/^<|>$/g, '')
     if (!raw || Object.prototype.hasOwnProperty.call(images, raw)) continue
@@ -233,13 +259,17 @@ async function collectImages(
       warnings.add(normalized.warning)
       continue
     }
-    const loaded = await source.load(normalized.relative, budget)
+    const loaded = await source.load(normalized.relative)
     if ('warning' in loaded) {
       warnings.add(loaded.warning)
       continue
     }
-    const mime = IMAGE_MIME[path.extname(normalized.relative).toLowerCase()]
-    images[raw] = `data:${mime};base64,${loaded.data.toString('base64')}`
+    const dataUrl = encodeImage(loaded.data, path.extname(normalized.relative).toLowerCase())
+    usedChars += dataUrl.length
+    if (usedChars > MAX_TOTAL_IMAGE_DATA_URL_CHARS) {
+      throw new Error(`图片展开后超过 ${MAX_TOTAL_IMAGE_DATA_URL_CHARS / 1024 / 1024}MB（当前约 ${Math.round(usedChars / 1024 / 1024)}MB），请拆分文档`)
+    }
+    images[raw] = dataUrl
   }
   return { images, warnings: [...warnings] }
 }
@@ -263,8 +293,12 @@ async function prepareMarkdownFile(resolved: string): Promise<PreparedMarkdownPa
 
   const baseDir = path.dirname(resolved)
   const source = createDirectorySource(baseDir, await findVaultRoot(baseDir))
-  const { images, warnings } = await collectImages(content, source)
-  return { filename, markdownContent: content, images, warnings }
+  try {
+    const { images, warnings } = await collectImages(content, source)
+    return { filename, markdownContent: content, images, warnings }
+  } catch (error: unknown) {
+    return failure(filename, error instanceof Error ? error.message : '图片展开失败')
+  }
 }
 
 /** 资源包来源：内存解包，要求恰好一个 .md，图片按条目名解析。 */
@@ -297,12 +331,16 @@ async function prepareMarkdownArchive(resolved: string): Promise<PreparedMarkdow
   const archive = new Map(entries.map((entry) => [entry.name, entry.data]))
   const markdownDir = path.posix.dirname(markdownEntry.name)
   const source = createArchiveSource(archive, markdownDir === '.' ? '' : markdownDir)
-  const { images, warnings } = await collectImages(markdownContent, source)
-  return {
-    filename: path.posix.basename(markdownEntry.name),
-    markdownContent,
-    images,
-    warnings,
+  try {
+    const { images, warnings } = await collectImages(markdownContent, source)
+    return {
+      filename: path.posix.basename(markdownEntry.name),
+      markdownContent,
+      images,
+      warnings,
+    }
+  } catch (error: unknown) {
+    return failure(filename, error instanceof Error ? error.message : '图片展开失败')
   }
 }
 

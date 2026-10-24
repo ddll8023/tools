@@ -1,11 +1,17 @@
 /**
  * Markdown 转 PDF 的来源准备：桌面端读取本地文件与图片，浏览器端直读上传文件。
  * 只产出渲染所需的 Markdown 文本与图片 Data URL，不包含排版或打印逻辑。
+ * 超长边图片在编码前等比缩小，并按 Data URL 字符总量限额，避免拼接阶段超出字符串上限。
  */
 import type { PreparedMarkdown } from './types'
 
 const MAX_ARCHIVE_MEMBERS = 4096
 const MAX_ARCHIVE_UNPACKED_BYTES = 1024 * 1024 * 1024
+// 与主进程保持一致：A4 正文宽约 174mm 时 2400px 仍有约 350 DPI。
+const MAX_IMAGE_EDGE_PX = 2400
+// 与主进程保持一致：V8 单串上限约 512M 字符，需为后续多份副本留出余量。
+const MAX_TOTAL_IMAGE_DATA_URL_CHARS = 320 * 1024 * 1024
+const JPEG_QUALITY = 0.88
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown']
 // 与主进程和渲染进程保持同一白名单：只接受浏览器可直接解码的位图格式。
 const IMAGE_MIME: Record<string, string> = {
@@ -91,7 +97,7 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-/** 把字节转成 Data URL，键使用 Markdown 中的原始引用路径。 */
+/** 把图片字节转成 Base64 Data URL，不处理引用路径匹配。 */
 function toDataUrl(data: Uint8Array, mime: string): string {
   let binary = ''
   const chunk = 0x8000
@@ -101,14 +107,50 @@ function toDataUrl(data: Uint8Array, mime: string): string {
   return `data:${mime};base64,${btoa(binary)}`
 }
 
-/** 按 Markdown 中的图片引用收集 Data URL；缺失或不支持的引用转为警告。 */
-function collectImages(
+/**
+ * 编码上传 ZIP 内的图片：最长边超限时等比缩小后重新编码。
+ * 解码或编码失败时回退原字节，宁可占体积也不丢图。
+ */
+async function encodeImage(data: Uint8Array, mime: string): Promise<string> {
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(new Blob([data as BlobPart], { type: mime }))
+  } catch {
+    return toDataUrl(data, mime)
+  }
+  try {
+    const longest = Math.max(bitmap.width, bitmap.height)
+    if (longest <= MAX_IMAGE_EDGE_PX) return toDataUrl(data, mime)
+    const scale = MAX_IMAGE_EDGE_PX / longest
+    const canvas = new OffscreenCanvas(
+      Math.max(1, Math.round(bitmap.width * scale)),
+      Math.max(1, Math.round(bitmap.height * scale))
+    )
+    const context = canvas.getContext('2d')
+    if (!context) return toDataUrl(data, mime)
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    const blob = await canvas.convertToBlob({ type: mime, quality: JPEG_QUALITY })
+    if (blob.size === 0) return toDataUrl(data, mime)
+    return toDataUrl(new Uint8Array(await blob.arrayBuffer()), blob.type || mime)
+  } catch {
+    return toDataUrl(data, mime)
+  } finally {
+    bitmap.close()
+  }
+}
+
+/**
+ * 按 Markdown 中的图片引用收集 Data URL。
+ * 单张图片缺失或格式不支持时降级为警告；累计字符数超限则整篇失败，避免产出缺图的 PDF。
+ */
+async function collectImages(
   content: string,
   files: Map<string, Uint8Array>,
   markdownDir: string
-): { images: Record<string, string>; warnings: string[] } {
+): Promise<{ images: Record<string, string>; warnings: string[] }> {
   const images: Record<string, string> = {}
   const warnings = new Set<string>()
+  let usedChars = 0
   const prefixes: string[] = []
   let current = markdownDir
   for (let depth = 0; depth <= 12; depth++) {
@@ -147,7 +189,12 @@ function collectImages(
       warnings.add(`图片文件不存在: ${raw}`)
       continue
     }
-    images[raw] = toDataUrl(data, mime)
+    const dataUrl = await encodeImage(data, mime)
+    usedChars += dataUrl.length
+    if (usedChars > MAX_TOTAL_IMAGE_DATA_URL_CHARS) {
+      throw new Error(`图片展开后超过 ${MAX_TOTAL_IMAGE_DATA_URL_CHARS / 1024 / 1024}MB（当前约 ${Math.round(usedChars / 1024 / 1024)}MB），请拆分文档`)
+    }
+    images[raw] = dataUrl
   }
   return { images, warnings: [...warnings] }
 }
@@ -170,7 +217,7 @@ async function readUploadedArchive(file: File): Promise<PreparedMarkdown> {
   if (!markdownData) throw new Error('ZIP 中未找到 .md 或 .markdown 文件')
   const content = new TextDecoder().decode(markdownData).replace(/^\uFEFF/, '')
   const slash = markdownName.lastIndexOf('/')
-  const { images, warnings } = collectImages(content, files, slash < 0 ? '' : markdownName.slice(0, slash))
+  const { images, warnings } = await collectImages(content, files, slash < 0 ? '' : markdownName.slice(0, slash))
   return {
     filename: markdownName.slice(slash + 1),
     markdown_content: content,

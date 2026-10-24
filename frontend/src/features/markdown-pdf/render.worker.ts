@@ -4,6 +4,13 @@ import hljs from 'highlight.js'
 import { initFormulaEngine, requireFormula } from '@/utils/math/engine'
 import type { PreparedMarkdown, RenderedMarkdown } from './types'
 
+// 与来源准备阶段保持一致：图片 Data URL 字符总量上限，超限直接整篇失败。
+const MAX_IMAGE_DATA_URL_CHARS = 320 * 1024 * 1024
+// 公式 SVG 体积上限，与图片预算分开计，避免公式单独撑爆拼接结果。
+const MAX_FORMULA_BYTES = 48 * 1024 * 1024
+// 拼接结果的兜底上限；真正的防线是上面两项预算，不应依赖这一项报错。
+const MAX_HTML_CHARS = 400 * 1024 * 1024
+
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -36,21 +43,19 @@ async function renderDocument(source: PreparedMarkdown): Promise<RenderedMarkdow
   await initFormulaEngine()
   const warnings = new Set<string>()
   let formulaCount = 0
-  let embeddedSize = 0
-  const reserveEmbeddedContent = (size: number) => {
-    embeddedSize += size
-    if (embeddedSize > 768 * 1024 * 1024) throw new Error('图片与公式展开后超过 768MB，请拆分文档')
-  }
+  let formulaBytes = 0
+  let imageChars = 0
   const formula = (content: string, display: boolean): string => {
     if (++formulaCount > 1000) throw new Error('公式超过 1000 个，请拆分文档')
     try {
       const paths = requireFormula(content, display)
-      reserveEmbeddedContent(paths.body.length)
+      formulaBytes += paths.body.length
+      if (formulaBytes > MAX_FORMULA_BYTES) throw new Error('公式展开后超过 48MB，请拆分文档')
       const height = paths.ascent + paths.descent
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${escapeHtml(content)}" viewBox="${paths.viewBox}" width="${paths.width}em" height="${height}em" style="vertical-align:-${paths.descent}em"><title>${escapeHtml(content)}</title>${paths.body}</svg>`
       return display ? `<div class="math-block">${svg}</div>\n` : `<span class="math-inline">${svg}</span>`
     } catch (error: unknown) {
-      if (embeddedSize > 768 * 1024 * 1024) throw error
+      if (formulaBytes > MAX_FORMULA_BYTES) throw error
       warnings.add('部分数学公式无法渲染，已保留原文，请在预览中检查')
       return `<code class="math-error">${escapeHtml(display ? `$$${content}$$` : `$${content}$`)}</code>`
     }
@@ -100,7 +105,10 @@ async function renderDocument(source: PreparedMarkdown): Promise<RenderedMarkdow
           return `<span class="missing-image">[图片未嵌入：${escapeHtml(text || '无替代文字')}]</span>`
         }
         // 同一资源被重复引用也计入展开预算，避免拼接后才发现 HTML 超大。
-        reserveEmbeddedContent(image.length)
+        imageChars += image.length
+        if (imageChars > MAX_IMAGE_DATA_URL_CHARS) {
+          throw new Error(`图片展开后超过 ${MAX_IMAGE_DATA_URL_CHARS / 1024 / 1024}MB，请拆分文档`)
+        }
         return `<img src="${image}" alt="${escapeHtml(text)}" />`
       },
       link({ href, tokens }) {
@@ -130,7 +138,7 @@ async function renderDocument(source: PreparedMarkdown): Promise<RenderedMarkdow
     },
   })
   const html = markdown.parse(source.markdown_content, { async: false })
-  if (html.length > 1024 * 1024 * 1024) throw new Error('渲染内容过大，请减少图片或拆分文档')
+  if (html.length > MAX_HTML_CHARS) throw new Error('渲染内容过大，请减少图片或拆分文档')
   return { html, warnings: [...warnings] }
 }
 
