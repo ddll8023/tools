@@ -191,7 +191,7 @@ function registerWindowIpc() {
       title: '选择 Markdown 文件',
       properties: ['openFile'],
       filters: [
-        { name: 'Markdown', extensions: ['md', 'markdown'] },
+        { name: 'Markdown 与资源包', extensions: ['md', 'markdown', 'zip'] },
         { name: '所有文件', extensions: ['*'] },
       ],
     }

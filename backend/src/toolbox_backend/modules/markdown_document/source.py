@@ -16,17 +16,21 @@ from toolbox_backend.infrastructure.files import safe_filename, save_file
 MAX_FILE_SIZE = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096
 MAX_ARCHIVE_UNPACKED_SIZE = 1024 * 1024 * 1024
+# 向上查找 .obsidian 库根的层数上限，避免异常目录层级导致无休止回溯。
+MAX_ANCESTOR_DEPTH = 12
 SUPPORTED_MARKDOWN_EXTENSIONS = (".md", ".markdown")
 SUPPORTED_INPUT_EXTENSIONS = SUPPORTED_MARKDOWN_EXTENSIONS + (".zip",)
 
 
 @dataclass(frozen=True)
 class MarkdownSource:
-    """Markdown 文件及允许解析相对图片的基准目录。"""
+    """Markdown 文件、允许解析相对图片的基准目录与候选查找目录。"""
 
     markdown_path: Path
     base_dir: Path
     from_local: bool = False
+    # 候选目录按优先级排列：首个为 Markdown 所在目录，其后是 Obsidian 库根等祖先目录。
+    search_dirs: tuple[Path, ...] = ()
 
 
 class MarkdownInputError(Exception):
@@ -41,7 +45,7 @@ def prepare_markdown_source(
     """按本地路径或上传文件准备来源；调用方管理临时目录生命周期。"""
     local_path = (source_path or "").strip()
     if local_path:
-        return _prepare_local_source(local_path)
+        return _prepare_local_source(local_path, task_dir)
     if file is None:
         raise ServiceException(ErrorCode.PARAM_ERROR, "请上传 Markdown 文件或提供本地 Markdown 路径")
 
@@ -63,7 +67,7 @@ def prepare_markdown_source(
     if extension in SUPPORTED_MARKDOWN_EXTENSIONS:
         markdown_path = source_dir / filename
         save_file(content, str(markdown_path))
-        return MarkdownSource(markdown_path, source_dir), filename
+        return MarkdownSource(markdown_path, source_dir, search_dirs=(source_dir,)), filename
 
     archive_path = task_dir / "input.zip"
     save_file(content, str(archive_path))
@@ -77,29 +81,95 @@ def prepare_markdown_source(
     if len(markdown_files) > 1:
         raise MarkdownInputError("ZIP 中只能包含一个 .md 或 .markdown 文件")
     markdown_path = markdown_files[0]
-    return MarkdownSource(markdown_path, markdown_path.parent), filename
+    return MarkdownSource(markdown_path, markdown_path.parent, search_dirs=(markdown_path.parent,)), filename
 
 
-def _prepare_local_source(raw_path: str) -> tuple[MarkdownSource, str]:
+def _prepare_local_source(raw_path: str, task_dir: Path) -> tuple[MarkdownSource, str]:
+    """准备本地来源：.md 直接读取，.zip 复制到任务目录后解包。"""
     path = Path(raw_path).expanduser()
-    if path.suffix.lower() not in SUPPORTED_MARKDOWN_EXTENSIONS:
-        raise ServiceException(ErrorCode.UNSUPPORTED_FILE_FORMAT, "本地文件必须是 .md 或 .markdown")
+    extension = path.suffix.lower()
+    if extension not in SUPPORTED_INPUT_EXTENSIONS:
+        raise ServiceException(
+            ErrorCode.UNSUPPORTED_FILE_FORMAT,
+            "本地文件必须是 .md、.markdown 或 .zip",
+        )
     try:
         is_file = path.is_file()
         size = path.stat().st_size if is_file else 0
     except OSError as exc:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 Markdown 文件不存在或无法读取") from exc
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地文件不存在或无法读取") from exc
     if not is_file:
-        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 Markdown 文件不存在或无法读取")
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地文件不存在或无法读取")
     if size == 0:
         raise ServiceException(ErrorCode.PARAM_ERROR, "文件不能为空")
     if size > MAX_FILE_SIZE:
         raise ServiceException(ErrorCode.FILE_TOO_LARGE, "文件大小不能超过 50MB")
-    markdown_path = path.resolve()
+
+    resolved = path.resolve()
+    if extension == ".zip":
+        return _prepare_local_archive(resolved, task_dir)
+
+    base_dir = resolved.parent
+    search_dirs = _search_dirs(base_dir)
     return (
-        MarkdownSource(markdown_path, markdown_path.parent, from_local=True),
+        MarkdownSource(resolved, base_dir, from_local=True, search_dirs=search_dirs),
+        safe_filename(resolved.name, "document.md"),
+    )
+
+
+def _prepare_local_archive(archive_path: Path, task_dir: Path) -> tuple[MarkdownSource, str]:
+    """本地 ZIP 资源包：解包到任务目录，与上传路径保持一致的校验规则。"""
+    source_dir = task_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        _extract_archive(archive_path, source_dir)
+    except MarkdownInputError:
+        raise
+    except OSError as exc:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, "本地 ZIP 文件无法读取") from exc
+
+    markdown_files = [
+        path for path in source_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_MARKDOWN_EXTENSIONS
+    ]
+    if not markdown_files:
+        raise MarkdownInputError("ZIP 中未找到 .md 或 .markdown 文件")
+    if len(markdown_files) > 1:
+        raise MarkdownInputError("ZIP 中只能包含一个 .md 或 .markdown 文件")
+    markdown_path = markdown_files[0]
+    return (
+        MarkdownSource(
+            markdown_path,
+            markdown_path.parent,
+            search_dirs=(markdown_path.parent,),
+        ),
         safe_filename(markdown_path.name, "document.md"),
     )
+
+
+def _search_dirs(base_dir: Path) -> tuple[Path, ...]:
+    """构造图片候选目录：Markdown 所在目录优先，其次向上找到的 Obsidian 库根。"""
+    directories = [base_dir]
+    vault_root = _find_vault_root(base_dir)
+    if vault_root is not None and vault_root != base_dir:
+        directories.append(vault_root)
+    return tuple(directories)
+
+
+def _find_vault_root(start_dir: Path) -> Path | None:
+    """向上最多 MAX_ANCESTOR_DEPTH 层查找 .obsidian 目录，作为库根。"""
+    current = start_dir
+    for _ in range(MAX_ANCESTOR_DEPTH):
+        try:
+            if (current / ".obsidian").is_dir():
+                return current
+        except OSError:
+            return None
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return None
 
 
 def _extract_archive(archive_path: Path, target_dir: Path) -> None:

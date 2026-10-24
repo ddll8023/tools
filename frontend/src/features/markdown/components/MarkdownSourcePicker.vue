@@ -89,7 +89,7 @@ async function pickLocalMarkdown() {
     <font-awesome-icon :icon="['far', 'file-lines']" class="text-text-secondary mb-3 text-3xl" aria-hidden="true" />
     <h2 class="mb-2 text-base font-semibold">选择或拖入 Markdown 文件</h2>
     <p class="text-text-secondary mb-5 text-sm">
-      {{ isDesktop ? '选择本地文件可读取文档目录内的图片；也可上传资源 ZIP' : '图片需与 Markdown 一起打包为 ZIP' }}
+      {{ isDesktop ? '选择本地文件可读取文档目录内的图片；也可直接选择 ZIP 资源包' : '图片需与 Markdown 一起打包为 ZIP' }}
     </p>
     <div class="flex flex-wrap justify-center gap-3">
       <button

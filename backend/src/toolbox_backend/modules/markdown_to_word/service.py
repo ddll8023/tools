@@ -40,7 +40,7 @@ CONVERT_TIMEOUT = 120
 
 _UPLOAD_IMAGE_HINT = (
     "图片文件未随 Markdown 一起提供：桌面端可用「选择本地 Markdown」直接读取同目录图片，"
-    "或把 .md 与 images/ 目录一起打包成 ZIP 上传"
+    "也可直接选择含 .md 与图片的 ZIP 资源包"
 )
 
 
@@ -76,6 +76,7 @@ def convert_markdown_to_word(
             markdown_content,
             source.base_dir,
             docx_path,
+            search_dirs=source.search_dirs,
         )
         warnings.extend(_missing_image_hints(source, warnings))
         _validate_docx(docx_path)

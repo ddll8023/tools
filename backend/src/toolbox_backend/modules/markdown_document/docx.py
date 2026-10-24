@@ -23,6 +23,7 @@ from docx.shared import Inches, Mm, Pt, RGBColor
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from toolbox_backend.modules.markdown_document.graphics import render_formula_png, render_svg_png
 from toolbox_backend.modules.markdown_document.tables import html_tables_to_markdown
 
 
@@ -67,9 +68,14 @@ class MarkdownDocxRenderer:
         document: DocumentType,
         base_dir: Path,
         options: DocumentRenderOptions | None = None,
+        search_dirs: Sequence[Path] | None = None,
     ):
         self.document = document
         self.base_dir = base_dir.resolve()
+        # 图片查找候选目录：首个为 Markdown 所在目录，其后是 Obsidian 库根等祖先目录。
+        self.search_dirs = tuple(
+            directory.resolve() for directory in (search_dirs or (base_dir,))
+        )
         self.options = options
         self.warnings: list[str] = []
         self._warning_set: set[str] = set()
@@ -194,7 +200,25 @@ class MarkdownDocxRenderer:
                 continue
 
             if token.type in {"fence", "code_block"}:
+                # 围栏 SVG 按图形嵌入；内容非法时仍按代码块输出，避免内容丢失。
+                if token.type == "fence" and token.info.strip().lower().startswith("svg"):
+                    if self._add_svg_block(token.content):
+                        index += 1
+                        continue
+                    self._warn("SVG 图形无法解析，已按代码块输出")
                 self._add_code_block(token.content)
+                index += 1
+                continue
+
+            if token.type == "math_block":
+                self._add_formula_block(token.content)
+                index += 1
+                continue
+
+            if token.type == "svg_block":
+                if not self._add_svg_block(token.content):
+                    self._warn("SVG 图形无法解析，已按代码块输出")
+                    self._add_code_block(token.content)
                 index += 1
                 continue
 
@@ -204,7 +228,17 @@ class MarkdownDocxRenderer:
                 index += 1
                 continue
 
-            if token.type in {"html_block", "html_inline"}:
+            if token.type == "html_block":
+                # 整块 SVG 是常见导出形式；其余原始 HTML 不执行，按忽略并警告处理。
+                stripped = token.content.strip()
+                if stripped.startswith("<svg") and stripped.endswith("</svg>") and self._add_svg_block(stripped):
+                    index += 1
+                    continue
+                self._warn("已忽略原始 HTML 内容")
+                index += 1
+                continue
+
+            if token.type == "html_inline":
                 self._warn("已忽略原始 HTML 内容")
 
             index += 1
@@ -317,6 +351,38 @@ class MarkdownDocxRenderer:
         paragraph.add_run(content.rstrip("\n"))
         self._shade_paragraph(paragraph, "F4F4F4")
 
+    def _add_svg_block(self, svg_text: str) -> bool:
+        """把 SVG 图形光栅化后嵌入正文，返回是否成功。"""
+        image = render_svg_png(svg_text)
+        if image is None:
+            return False
+        paragraph = self.document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        try:
+            paragraph.add_run().add_picture(image, width=Inches(_MAX_IMAGE_WIDTH_INCHES))
+        except Exception:
+            paragraph._p.getparent().remove(paragraph._p)
+            return False
+        return True
+
+    def _add_formula_block(self, latex: str) -> None:
+        """独立公式按居中段落嵌入；语法不被支持时保留原文并告警。"""
+        font_size = self.options.font_size if self.options else 11
+        image = render_formula_png(latex, font_size)
+        if image is None:
+            self._warn(f"公式无法渲染，已保留原文: {latex[:60]}")
+            paragraph = self.document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.add_run(f"$${latex}$$")
+            return
+        paragraph = self.document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        try:
+            paragraph.add_run().add_picture(image, width=Inches(_MAX_IMAGE_WIDTH_INCHES))
+        except Exception:
+            self._warn(f"公式无法嵌入: {latex[:60]}")
+            paragraph.add_run(f"$${latex}$$")
+
     def _render_inline(self, tokens: Iterable[Token], paragraph) -> None:
         style_stack = [_InlineStyle()]
         token_list = list(tokens)
@@ -372,6 +438,13 @@ class MarkdownDocxRenderer:
                 index += 1
                 continue
 
+            if token.type == "math_inline":
+                # 单行 $$...$$ 按略大的行内公式嵌入；不另起段落，避免打乱当前行内顺序。
+                display = bool((token.meta or {}).get("display"))
+                self._add_inline_formula(paragraph, token.content, display=display)
+                index += 1
+                continue
+
             if token.type == "html_inline":
                 self._warn("已忽略原始 HTML 内容")
                 index += 1
@@ -398,6 +471,22 @@ class MarkdownDocxRenderer:
             self._warn(f"图片无法嵌入: {alt_text or source}")
             paragraph.add_run(f"[图片无法嵌入: {alt_text or source}]")
 
+    def _add_inline_formula(self, paragraph, latex: str, display: bool = False) -> None:
+        """行内公式嵌在段落中；语法不被支持时保留原文并告警。"""
+        font_size = self.options.font_size if self.options else 11
+        image = render_formula_png(latex, font_size)
+        if image is None:
+            self._warn(f"公式无法渲染，已保留原文: {latex[:60]}")
+            paragraph.add_run(f"${latex}$")
+            return
+        try:
+            # 按字号高度约束，避免撑开行距；单行 $$ 略大以体现独立公式。
+            height = font_size * (2.6 if display else 1.9)
+            paragraph.add_run().add_picture(image, height=Pt(height))
+        except Exception:
+            self._warn(f"公式无法嵌入: {latex[:60]}")
+            paragraph.add_run(f"${latex}$")
+
     def _resolve_image(self, source: str) -> Path | BytesIO | None:
         if not source:
             self._warn("Markdown 图片缺少路径")
@@ -416,14 +505,15 @@ class MarkdownDocxRenderer:
             self._warn(f"已跳过越界图片路径: {source}")
             return None
 
-        candidate = (self.base_dir / relative_path).resolve()
-        if not candidate.is_relative_to(self.base_dir):
-            self._warn(f"已跳过越界图片路径: {source}")
-            return None
-        if not candidate.is_file():
-            self._warn(f"图片文件不存在: {source}")
-            return None
-        return candidate
+        # 逐个候选目录尝试：每个候选路径仍必须落在该候选根目录内，避免借库根越界。
+        for search_dir in self.search_dirs:
+            candidate = (search_dir / relative_path).resolve()
+            if not candidate.is_relative_to(search_dir):
+                continue
+            if candidate.is_file():
+                return candidate
+        self._warn(f"图片文件不存在: {source}")
+        return None
 
     def _decode_data_uri(self, source: str) -> BytesIO | None:
         match = re.match(r"^data:[^;,]+(?:;[^;,]+)*;base64,(.+)$", source, re.IGNORECASE | re.DOTALL)
@@ -565,19 +655,144 @@ def render_markdown_to_docx(
     base_dir: Path,
     output_path: Path,
     options: DocumentRenderOptions | None = None,
+    search_dirs: Sequence[Path] | None = None,
 ) -> list[str]:
     """将 Markdown 文本渲染为 DOCX，并返回非致命转换警告。
 
     规整的 HTML 表格先归一化为管道表格再渲染，保证 Word 输出真实表格；
-    其余原始 HTML 不执行，按忽略并警告处理。
+    公式与 SVG 图形转为位图嵌入；其余原始 HTML 不执行，按忽略并警告处理。
     """
     markdown_content, _ = html_tables_to_markdown(markdown_content)
-    parser = MarkdownIt("commonmark", {"html": True})
-    parser.enable(["table", "strikethrough"])
+    parser = _create_parser()
     tokens = parser.parse(markdown_content)
 
     document = Document()
-    renderer = MarkdownDocxRenderer(document, base_dir, options)
+    renderer = MarkdownDocxRenderer(document, base_dir, options, search_dirs)
     warnings = renderer.render(tokens)
     document.save(str(output_path))
     return warnings
+
+
+def _create_parser() -> MarkdownIt:
+    """构造启用表格、删除线与公式规则的 Markdown 解析器。"""
+    parser = MarkdownIt("commonmark", {"html": True})
+    parser.enable(["table", "strikethrough"])
+    parser.inline.ruler.before("escape", "math_inline", _math_inline_rule)
+    # 注册到 paragraph 终止规则：紧跟在正文行后的 $$ 块仍能中断段落，与前端解析保持一致。
+    parser.block.ruler.before("fence", "math_block", _math_block_rule, {"alt": ["paragraph"]})
+    # 裸 <svg> 整块不是 CommonMark 的块级标签，需单独识别，否则会拆成多个 html_inline。
+    parser.block.ruler.before("fence", "svg_block", _svg_block_rule, {"alt": ["paragraph"]})
+    return parser
+
+
+def _svg_block_rule(state, start_line: int, end_line: int, silent: bool) -> bool:
+    """识别以 <svg 开头、以 </svg> 结尾的整块 SVG。"""
+    pos = state.bMarks[start_line] + state.tShift[start_line]
+    line = state.src[pos : state.eMarks[start_line]]
+    if not line.lstrip().startswith("<svg"):
+        return False
+    if silent:
+        return True
+
+    lines: list[str] = []
+    next_line = start_line
+    while next_line < end_line:
+        begin = state.bMarks[next_line] + state.tShift[next_line]
+        text = state.src[begin : state.eMarks[next_line]]
+        lines.append(text)
+        if "</svg>" in text:
+            break
+        next_line += 1
+    else:
+        return False
+
+    svg_text = "\n".join(lines).strip()
+    if not svg_text.endswith("</svg>"):
+        return False
+    state.line = next_line + 1
+    token = state.push("svg_block", "svg", 0)
+    token.block = True
+    token.content = svg_text
+    token.map = [start_line, state.line]
+    return True
+
+
+def _math_inline_rule(state, silent: bool) -> bool:
+    """识别行内 $...$；不跨行，且不把 $$ 序列拆成两个行内公式。"""
+    src = state.src
+    pos = state.pos
+    if src[pos] != "$":
+        return False
+    # 与前端解析一致：$$ 开头的序列不进入行内公式，避免留下孤立美元符。
+    if pos > 0 and src[pos - 1] == "$":
+        return False
+    display = pos + 1 < len(src) and src[pos + 1] == "$"
+    if display:
+        if pos + 2 >= len(src) or src[pos + 2].isspace():
+            return False
+        start = pos + 2
+    else:
+        if pos + 1 >= len(src) or src[pos + 1].isspace():
+            return False
+        start = pos + 1
+
+    end = start
+    while end < len(src):
+        char = src[end]
+        if char == "\\":
+            end += 2
+            continue
+        if char == "\n":
+            return False
+        if char == "$":
+            break
+        end += 1
+    if end >= len(src) or src[end] != "$" or end == start:
+        return False
+    if display and (end + 1 >= len(src) or src[end + 1] != "$"):
+        return False
+
+    if not silent:
+        token = state.push("math_inline", "math", 0)
+        token.content = src[start:end]
+        # 单行 $$...$$ 按独立公式排版，其余保持行内。
+        token.meta = {"display": display}
+    state.pos = end + (2 if display else 1)
+    return True
+
+
+def _math_block_rule(state, start_line: int, end_line: int, silent: bool) -> bool:
+    """识别独立 $$...$$ 块，支持单行与多行两种写法。"""
+    pos = state.bMarks[start_line] + state.tShift[start_line]
+    line = state.src[pos : state.eMarks[start_line]]
+    if not line.startswith("$$"):
+        return False
+    if silent:
+        return True
+
+    rest = line[2:]
+    if rest.rstrip().endswith("$$") and len(rest.rstrip()) >= 2:
+        content = rest.rstrip()[:-2].strip()
+        next_line = start_line + 1
+    else:
+        content_lines: list[str] = []
+        next_line = start_line + 1
+        while next_line < end_line:
+            begin = state.bMarks[next_line] + state.tShift[next_line]
+            text = state.src[begin : state.eMarks[next_line]]
+            if text.strip() == "$$":
+                break
+            content_lines.append(text)
+            next_line += 1
+        else:
+            return False
+        content = "\n".join(content_lines).strip()
+
+    if not content:
+        return False
+    state.line = next_line + 1
+    token = state.push("math_block", "math", 0)
+    token.block = True
+    token.content = content
+    token.map = [start_line, state.line]
+    return True
