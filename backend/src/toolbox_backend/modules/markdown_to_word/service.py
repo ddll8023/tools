@@ -74,9 +74,8 @@ def convert_markdown_to_word(
         )
         warnings = render_markdown_to_docx(
             markdown_content,
-            source.base_dir,
+            source.search_dirs,
             docx_path,
-            search_dirs=source.search_dirs,
         )
         warnings.extend(_missing_image_hints(source, warnings))
         _validate_docx(docx_path)

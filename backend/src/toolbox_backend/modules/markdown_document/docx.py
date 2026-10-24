@@ -66,16 +66,12 @@ class MarkdownDocxRenderer:
     def __init__(
         self,
         document: DocumentType,
-        base_dir: Path,
+        search_dirs: Sequence[Path],
         options: DocumentRenderOptions | None = None,
-        search_dirs: Sequence[Path] | None = None,
     ):
         self.document = document
-        self.base_dir = base_dir.resolve()
         # 图片查找候选目录：首个为 Markdown 所在目录，其后是 Obsidian 库根等祖先目录。
-        self.search_dirs = tuple(
-            directory.resolve() for directory in (search_dirs or (base_dir,))
-        )
+        self.search_dirs = tuple(directory.resolve() for directory in search_dirs)
         self.options = options
         self.warnings: list[str] = []
         self._warning_set: set[str] = set()
@@ -652,13 +648,13 @@ class MarkdownDocxRenderer:
 
 def render_markdown_to_docx(
     markdown_content: str,
-    base_dir: Path,
+    search_dirs: Sequence[Path],
     output_path: Path,
     options: DocumentRenderOptions | None = None,
-    search_dirs: Sequence[Path] | None = None,
 ) -> list[str]:
     """将 Markdown 文本渲染为 DOCX，并返回非致命转换警告。
 
+    search_dirs 为图片查找候选目录，首个应为 Markdown 所在目录；
     规整的 HTML 表格先归一化为管道表格再渲染，保证 Word 输出真实表格；
     公式与 SVG 图形转为位图嵌入；其余原始 HTML 不执行，按忽略并警告处理。
     """
@@ -667,7 +663,7 @@ def render_markdown_to_docx(
     tokens = parser.parse(markdown_content)
 
     document = Document()
-    renderer = MarkdownDocxRenderer(document, base_dir, options, search_dirs)
+    renderer = MarkdownDocxRenderer(document, search_dirs, options)
     warnings = renderer.render(tokens)
     document.save(str(output_path))
     return warnings
