@@ -7,6 +7,7 @@ matplotlib 与 PyMuPDF 都在首次使用时延迟导入：纯文本文档不承
 from __future__ import annotations
 
 import re
+import threading
 from io import BytesIO
 
 from toolbox_backend.core.logging import setup_logger
@@ -21,6 +22,8 @@ _MAX_PIXELS = 40_000_000
 _FORMULA_DPI = 300
 # mathtext 字体不含中日韩字形，含这类字符时直接降级为原文，避免输出豆腐块。
 _CJK_PATTERN = re.compile(r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
+# mathtext 内部使用共享缓存与全局字体状态，多线程同时渲染会互相干扰，必须串行。
+_FORMULA_LOCK = threading.Lock()
 
 
 def render_formula_png(latex: str, font_size_pt: float) -> BytesIO | None:
@@ -41,13 +44,15 @@ def render_formula_png(latex: str, font_size_pt: float) -> BytesIO | None:
 
     buffer = BytesIO()
     try:
-        mathtext.math_to_image(
-            f"${latex}$",
-            buffer,
-            prop=FontProperties(size=font_size_pt),
-            dpi=_FORMULA_DPI,
-            format="png",
-        )
+        # 串行执行：mathtext 的解析缓存与字体状态不是线程安全的。
+        with _FORMULA_LOCK:
+            mathtext.math_to_image(
+                f"${latex}$",
+                buffer,
+                prop=FontProperties(size=font_size_pt),
+                dpi=_FORMULA_DPI,
+                format="png",
+            )
     except Exception:
         # mathtext 只覆盖 LaTeX 子集（如 cases 环境不支持），交给调用方降级处理。
         return None
