@@ -33,7 +33,7 @@ _TOOLS = [
         name="MarkdownToWord",
         path="markdown-to-word",
         display_name="Markdown 转 Word",
-        description="将 Markdown 文件或带 images 目录的 ZIP 转换为 DOCX 或 DOC",
+        description="将 Markdown 文件或带图片的 ZIP 转换为 DOCX 或 DOC，支持公式、SVG 与同目录图片",
         icon="fas fa-file-word",
         available=True,
     ),
