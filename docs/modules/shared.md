@@ -46,7 +46,7 @@
 
 | 文件 | 共同职责 | 已知消费者与用途 |
 | --- | --- | --- |
-| `backend/src/toolbox_backend/integrations/libreoffice.py` | `check_available` 探测、`convert_to_pdf`、`convert_to_doc`、进程树终止 | word-to-pdf、markdown-to-word（`.doc` 输出）、`lifecycle.py` 能力探测 |
+| `backend/src/toolbox_backend/integrations/libreoffice.py` | `check_available` 探测、`convert_to_pdf`、`convert_to_doc`、`sanitize_office_document`、并发额度、输出名回落、进程树终止；超时、并发上限与排队上限由 `core/config.py` 的 `LIBREOFFICE_*` 控制 | word-to-pdf、markdown-to-word（`.doc` 输出）、`lifecycle.py` 能力探测 |
 | `backend/src/toolbox_backend/integrations/mineru.py` | 模型缓存目录、就绪判定、运行时环境变量、下载/转换可执行入口与命令构造 | pdf-to-markdown 深度引擎、settings-models 模型下载 |
 
 两者都只在调用时构造子进程命令，不在模块导入时探测或加载外部资源。打包后通过 `backend/packaging/server.py` 的 `--toolbox-mineru*` 分支复用同一可执行文件。

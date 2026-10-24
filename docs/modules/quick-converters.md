@@ -37,7 +37,7 @@
 | 文件 | 当前用途及纳入依据 |
 | --- | --- |
 | `backend/src/toolbox_backend/modules/word_to_pdf/router.py` | `POST /convert`、`POST /download` |
-| `backend/src/toolbox_backend/modules/word_to_pdf/service.py` | `convert_word`、`download_pdf`；`SUPPORTED_EXTENSIONS = (".docx", ".doc")` |
+| `backend/src/toolbox_backend/modules/word_to_pdf/service.py` | `convert_word`、`download_pdf`；`SUPPORTED_EXTENSIONS = (".docx", ".doc")`；转换前对 `.docx` 调 `sanitize_office_document` 剔除宏、ActiveX 与外部关系 |
 | `backend/src/toolbox_backend/modules/word_to_pdf/schemas.py` | `ConvertResponse`、`DownloadRequest` |
 | `frontend/src/views/tools/WordToPdf.vue` | 上传、转换、下载；50MB 上限 |
 
@@ -122,6 +122,7 @@
 - 上传上限：PDF 转 Word、Word 转 PDF、EPUB 均 50MB；图片转换单文件 50MB、批量 20 张、总像素 4000 万；二维码内容 2500 字节、文件 1500 字节。
 - ZIP 解包（EPUB）与任务路径（全部）都做穿越校验，落点限定在任务目录或 `TEMP_DIR` 内。
 - Word 转 PDF 依赖外部 LibreOffice，其可用性由启动探测决定，不在本模块内检测。
+- LibreOffice 转换受 `LIBREOFFICE_MAX_CONCURRENCY` 并发额度约束，排队超时直接报错而非无限等待；`.docx` 在转换前经 `sanitize_office_document` 剔除宏、ActiveX 与外部关系；输出文件名偏离预期时回落到输出目录内唯一的同扩展名文件。
 
 ## 当前覆盖边界
 

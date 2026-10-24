@@ -62,7 +62,7 @@
 - `file` 与 `source_path` 至少提供一个，两者都缺时 `prepare_markdown_source` 抛 `MarkdownInputError`。
 - 本地路径读取只在桌面端可用；浏览器环境下前端不展示该入口。
 - 图片缺失时，上传来源额外给出一条恢复提示（改用本地 Markdown 或 ZIP 资源包），本地来源不再追加。
-- `CONVERT_TIMEOUT = 120` 秒限制 LibreOffice 的 DOC 转换。
+- DOC 转换的超时由 `integrations/libreoffice.py` 的 `LIBREOFFICE_CONVERT_TIMEOUT` 控制（见 `core/config.py`）。
 - DOCX 有效性通过 ZIP 结构与必需条目校验，不依赖文件大小阈值。
 
 ## 当前覆盖边界

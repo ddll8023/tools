@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     MINERU_CONVERT_TIMEOUT: int = 600
     ID_PHOTO_MODEL_PATH: str = ""
     LIBREOFFICE_PATH: str = ""
+    # LibreOffice 单次转换超时；大会文档需要更长时间，不再硬编码在调用点。
+    LIBREOFFICE_CONVERT_TIMEOUT: int = Field(600, ge=30, le=3600)
+    # 同时运行的 soffice 进程上限；并发会互抢内存与 profile 目录。
+    LIBREOFFICE_MAX_CONCURRENCY: int = Field(1, ge=1, le=4)
+    # 排队等待并发额度的上限，超时直接报错而不是无限阻塞请求。
+    LIBREOFFICE_QUEUE_TIMEOUT: int = Field(300, ge=10, le=1800)
     TOOLBOX_DATA_DIR: str = ""
     TOOLBOX_LAUNCH_ID: str = ""
     APP_SHUTDOWN_TIMEOUT_SECONDS: float = Field(30.0, ge=5, le=120)

@@ -36,8 +36,6 @@ DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 DOC_MEDIA_TYPE = "application/msword"
 OutputFormat = Literal["docx", "doc"]
 
-CONVERT_TIMEOUT = 120
-
 _UPLOAD_IMAGE_HINT = (
     "图片文件未随 Markdown 一起提供：桌面端可用「选择本地 Markdown」直接读取同目录图片，"
     "也可直接选择含 .md 与图片的 ZIP 资源包"
@@ -83,7 +81,7 @@ def convert_markdown_to_word(
         output_path = docx_path
         if selected_format == "doc":
             output_path = task_dir / "output.doc"
-            convert_to_doc(docx_path, output_path, task_dir, timeout=CONVERT_TIMEOUT)
+            convert_to_doc(docx_path, output_path, task_dir)
             _validate_doc(output_path)
 
         metadata = {

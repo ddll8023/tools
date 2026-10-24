@@ -15,9 +15,9 @@
 | 文件 | 当前用途及纳入依据 |
 | --- | --- |
 | `backend/src/toolbox_backend/modules/pdf_to_markdown/router.py` | 四个 POST 接口；`convert` 按 `deep_parse` 表单字段分流到标准或深度服务 |
-| `backend/src/toolbox_backend/modules/pdf_to_markdown/service.py` | 标准模式 `convert_pdf`：逐页 `get_text`、`get_images`、`find_tables` 拼 Markdown |
+| `backend/src/toolbox_backend/modules/pdf_to_markdown/service.py` | 标准模式 `convert_pdf`：按页面坐标重建阅读顺序，文本块/图片/表格统一按 y/x 排序，标题层级由字号相对正文中位数判定，表格区域内的文本块不重复输出；合并有框线与无框线两种表格检测；跨页表格链（可跨两页以上）在列数、列边界、左右外框与页顶位置同时符合时合并，并丢弃重复表头 |
 | `backend/src/toolbox_backend/modules/pdf_to_markdown/deep_service.py` | 深度模式：`convert_pdf_deep`、单 worker `ProcessPoolExecutor`、`_run_mineru_convert`、进度关键词匹配、`stop_mineru_executor` |
-| `backend/src/toolbox_backend/modules/pdf_to_markdown/result.py` | 共用的任务目录读写：`get_preview_detail`、`download_md`、`read_deep_status`、`write_status_atomic`、`normalize_output`、资源打包为 ZIP |
+| `backend/src/toolbox_backend/modules/pdf_to_markdown/result.py` | 共用的任务目录读写：`get_preview_detail`、`download_md`、`read_deep_status`、`write_status_atomic`、`normalize_output`、`PAGE_SEPARATOR`、`_read_pdf_page_count`、资源打包为 ZIP |
 | `backend/src/toolbox_backend/modules/pdf_to_markdown/schemas.py` | `ConvertResponse`、`GetProgress*`、`GetPreview*`、`DownloadRequest` |
 | `frontend/src/views/tools/PdfToMarkdown.vue` | 上传/拖拽、模式切换、进度条、左右对照预览、下载与告警展示 |
 | `frontend/tests/pdf-integration.spec.ts`、`frontend/tests/tool-page.spec.ts` | 该页的浏览器用例 |
@@ -43,8 +43,8 @@
 
 1. `handleFile` → `convertPdf(file, false)` → `POST /convert`（multipart）。
 2. `service.convert_pdf`：校验扩展名与 50MB 上限 → 生成 12 位 `task_id` → 写 `meta.txt` → 存 `uploads/<task_id>-<name>` 并复制为任务目录 `input.pdf`。
-3. `fitz.open` 逐页处理：`get_text`、`get_images`/`extract_image` 写 `images/pageN_M.ext`、`find_tables` 转管道表格；遇到加密 PDF 或解析异常转成 `UNSUPPORTED_FILE_FORMAT`/`CONVERSION_FAILED`。
-4. 写 `output.md`，返回 `{task_id, filename, page_count}`。
+3. `fitz.open` 逐页重建：`get_text("dict")` 取文本块与字号，标题层级由字号相对正文加权中位数判定；`get_image_info(xrefs=True)` 按 xref 去重导出图片到 `images/`；`find_tables` 合并 `lines` 与 `text` 两种策略，并按区域排除表格内的文本块，避免内容重复。遇到加密 PDF 或解析异常转成 `UNSUPPORTED_FILE_FORMAT`/`CONVERSION_FAILED`。
+4. 写盘前先 `_merge_cross_page_tables` 合并被页边界断开的表格链，页间用 `PAGE_SEPARATOR` 分隔；写 `output.md`，返回 `{task_id, filename, page_count}`。
 5. 前端 `getPreview(taskId)` → `POST /preview` → `result.get_preview_detail` 读取 Markdown 与引用资源；下载时 `downloadMd` 由 `result.download_md` 返回单文件或含资源的 ZIP。
 
 ### 深度模式
@@ -77,4 +77,5 @@
 ## 当前覆盖边界
 
 - 深度模式的进度依赖 MinerU CLI 的 stdout/stderr 文本关键词，具体阶段文案由第三方 CLI 决定。
+- 跨页表格合并在「上一页最后一张表 + 下一页第一张表」之间生效；同一页出现多张表格交替时不会跨页合并。
 - 打包态 MinerU 入口为 `--toolbox-mineru`，源码态为 `mineru` 可执行文件，两者行为差异未在本模块内适配，由 `integrations/mineru.py` 承担。

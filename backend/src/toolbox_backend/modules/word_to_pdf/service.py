@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 from toolbox_backend.infrastructure.files import save_file, safe_filename
-from toolbox_backend.integrations.libreoffice import convert_to_pdf
+from toolbox_backend.integrations.libreoffice import convert_to_pdf, sanitize_office_document
 from toolbox_backend.infrastructure.task_storage.workspace import (
     ensure_task_path,
     get_task_dir,
@@ -51,6 +51,9 @@ def convert_word(file: UploadFile) -> ConvertResponse:
     input_path = os.path.join(task_dir, input_filename)
     save_file(file.file.read(), input_path)
 
+    # 先剔除宏、ActiveX 与外部关系，避免原始上传文件被 LibreOffice 解析时触发外部请求。
+    sanitize_office_document(Path(input_path), ext)
+
     output_pdf = os.path.join(task_dir, "output.pdf")
 
     logger.info(f"开始 Word 转 PDF: task_id={task_id} filename={safe_name}")
@@ -58,7 +61,6 @@ def convert_word(file: UploadFile) -> ConvertResponse:
         Path(input_path),
         Path(output_pdf),
         Path(task_dir),
-        timeout=120,
     )
 
     if not os.path.exists(output_pdf):

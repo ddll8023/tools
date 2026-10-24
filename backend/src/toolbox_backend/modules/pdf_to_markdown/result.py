@@ -23,6 +23,8 @@ logger = setup_logger(__name__)
 
 _META_FILE = "meta.txt"
 _DOWNLOAD_ZIP_PREFIX = "pdf_markdown_"
+# 标准模式页间分隔符；MinerU 深度输出不含此标记。
+PAGE_SEPARATOR = "\n\n---\n\n"
 
 # Markdown 图片引用与 HTML img 标签（MinerU 部分输出使用内联 img）
 _IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")
@@ -75,19 +77,10 @@ def get_preview_detail(task_id: str):
         md_content = f.read()
 
     table_count = count_tables(md_content)
-    page_count = md_content.count("\n---\n\n## 第")
-
-    # 标准模式使用 ## 第 N 页 标记分页，MinerU 输出无此标记时从原始 PDF 获取页数
+    page_count = _read_pdf_page_count(task_dir)
     if page_count == 0:
-        pdf_path = os.path.join(task_dir, "input.pdf")
-        if os.path.exists(pdf_path):
-            try:
-                import fitz
-                doc = fitz.open(pdf_path)
-                page_count = len(doc)
-                doc.close()
-            except Exception:
-                pass
+        # 原始 PDF 不可用时回退到分隔符计数，只作展示用途。
+        page_count = md_content.count(PAGE_SEPARATOR)
 
     logger.info(f"预览返回: task_id={task_id} pages={page_count} tables={table_count} images={image_count}")
     return GetPreviewResponse(
@@ -96,6 +89,23 @@ def get_preview_detail(task_id: str):
         table_count=table_count,
         image_count=image_count,
     )
+
+
+def _read_pdf_page_count(task_dir: str) -> int:
+    """从任务目录内的原始 PDF 读取页数；文件缺失或损坏时返回 0。"""
+    pdf_path = os.path.join(task_dir, "input.pdf")
+    if not os.path.exists(pdf_path):
+        return 0
+    try:
+        import fitz
+
+        doc = fitz.open(pdf_path)
+        try:
+            return len(doc)
+        finally:
+            doc.close()
+    except Exception:
+        return 0
 
 
 def _read_original_stem(task_dir: str, task_id: str) -> str:
