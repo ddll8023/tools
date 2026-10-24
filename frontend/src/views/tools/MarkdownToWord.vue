@@ -257,7 +257,7 @@ function resetUpload() {
 
     <footer class="text-text-tertiary mt-5 text-center text-[12px]">
       <font-awesome-icon :icon="['far', 'clock']" class="mr-1" aria-hidden="true" />
-      本地处理，文件不会上传
+      本地处理，文件不会上传；公式与 SVG 由内置渲染器转换为图片后嵌入。
     </footer>
   </main>
 </template>
