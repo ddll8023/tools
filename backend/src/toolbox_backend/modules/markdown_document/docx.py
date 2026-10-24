@@ -745,8 +745,8 @@ def _math_inline_rule(state, silent: bool) -> bool:
         end += 1
     if end >= len(src) or src[end] != "$" or end == start:
         return False
-    # 内容内不允许空白，否则“价格 $5 与 $10”这类文本会被误判为公式。
-    if any(character.isspace() for character in src[start:end]):
+    # 与前端规则对齐：结束符前不允许空白、且不能紧跟数字，否则“$5 与 $10”会被当成公式。
+    if src[end - 1].isspace() or src[end + 1 : end + 2].isdigit():
         return False
     if display and (end + 1 >= len(src) or src[end + 1] != "$"):
         return False
