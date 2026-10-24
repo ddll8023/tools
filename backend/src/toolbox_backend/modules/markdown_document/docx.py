@@ -75,11 +75,20 @@ class MarkdownDocxRenderer:
         self.options = options
         self.warnings: list[str] = []
         self._warning_set: set[str] = set()
+        # 公式降级按类型累计，渲染结束后统一输出一条带数量的告警。
+        self._formula_failures: dict[str, int] = {}
         self._configure_document()
 
     def render(self, tokens: Sequence[Token]) -> list[str]:
         self._render_blocks(tokens, 0, len(tokens), _RenderContext())
+        self._flush_formula_warnings()
         return self.warnings
+
+    def _flush_formula_warnings(self) -> None:
+        """把公式降级按类型聚合成一条告警，避免长文档逐条刷屏。"""
+        for message, count in self._formula_failures.items():
+            self._warn(message if count == 1 else f"{message}（共 {count} 处）")
+        self._formula_failures.clear()
 
     def _configure_document(self) -> None:
         """设置文档页边距和常用样式。"""
@@ -366,7 +375,7 @@ class MarkdownDocxRenderer:
         font_size = self.options.font_size if self.options else 11
         image = render_formula_png(latex, font_size)
         if image is None:
-            self._warn(f"公式无法渲染，已保留原文: {latex[:60]}")
+            self._count_formula_failure("公式无法渲染，已保留原文")
             paragraph = self.document.add_paragraph()
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             paragraph.add_run(f"$${latex}$$")
@@ -376,7 +385,7 @@ class MarkdownDocxRenderer:
         try:
             paragraph.add_run().add_picture(image, width=Inches(_MAX_IMAGE_WIDTH_INCHES))
         except Exception:
-            self._warn(f"公式无法嵌入: {latex[:60]}")
+            self._count_formula_failure("公式无法嵌入")
             paragraph.add_run(f"$${latex}$$")
 
     def _render_inline(self, tokens: Iterable[Token], paragraph) -> None:
@@ -472,7 +481,7 @@ class MarkdownDocxRenderer:
         font_size = self.options.font_size if self.options else 11
         image = render_formula_png(latex, font_size)
         if image is None:
-            self._warn(f"公式无法渲染，已保留原文: {latex[:60]}")
+            self._count_formula_failure("公式无法渲染，已保留原文")
             paragraph.add_run(f"${latex}$")
             return
         try:
@@ -480,7 +489,7 @@ class MarkdownDocxRenderer:
             height = font_size * (2.6 if display else 1.9)
             paragraph.add_run().add_picture(image, height=Pt(height))
         except Exception:
-            self._warn(f"公式无法嵌入: {latex[:60]}")
+            self._count_formula_failure("公式无法嵌入")
             paragraph.add_run(f"${latex}$")
 
     def _resolve_image(self, source: str) -> Path | BytesIO | None:
@@ -625,6 +634,10 @@ class MarkdownDocxRenderer:
             {"bullet_list_close", "ordered_list_close"},
             end,
         )
+
+    def _count_formula_failure(self, message: str) -> None:
+        """累计公式降级次数；具体内容已随原文保留在文档中，无需写进告警。"""
+        self._formula_failures[message] = self._formula_failures.get(message, 0) + 1
 
     def _warn(self, message: str) -> None:
         if message not in self._warning_set:
