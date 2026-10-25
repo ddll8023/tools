@@ -78,7 +78,7 @@ GitHub API 的 `license` 字段显示为 `NOASSERTION`，与根 `LICENSE` 的 MI
 
 本项目当前 12 个工具（见 [工具目录](../modules/tool-catalog.md)）与 Stirling-PDF 的对照结果：实质重合 4 项、部分重合 3 项、无对应 5 项。
 
-### 实质重合（同一功能）
+### 实质重合
 
 | 本项目工具 | Stirling 对应 | 关键差异 |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ GitHub API 的 `license` 字段显示为 `NOASSERTION`，与根 `LICENSE` 的 MI
 | 文本/文件转二维码 | Stirling 的二维码仅作为手机配对入口，不对外提供生成能力 |
 | 有线传输（MTP） | 无设备侧能力 |
 
-### Stirling 有、本项目完全没有
+### 对方独有
 
 | 类别 | 能力 |
 | --- | --- |
