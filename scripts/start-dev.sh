@@ -64,9 +64,15 @@ command -v uv >/dev/null 2>&1 \
 [ -x "backend/.venv/bin/python" ] \
   || abort "后端 Python 环境未创建。" "请在项目根目录运行: uv sync --directory backend"
 
-# USB 原生依赖只在 macOS 上随包分发，开发态同样需要它加载有线传输能力。
-[ -f "build/usb-native/dist/manifest.json" ] \
-  || abort "USB 原生依赖未构建，有线传输功能不可用。" "请在项目根目录运行: npm run build:usb-native"
+# USB 原生依赖随包分发；开发态优先使用系统库或已构建产物，缺库时不阻断其余模块开发。
+if [ -f "build/usb-native/dist/manifest.json" ]; then
+  echo "[提示] 检测到已构建的 USB 原生依赖。"
+elif [ -f "/opt/homebrew/opt/libmtp/lib/libmtp.dylib" ] || [ -f "/opt/homebrew/lib/libmtp.dylib" ] || [ -f "/usr/local/opt/libmtp/lib/libmtp.dylib" ] || [ -f "/usr/local/lib/libmtp.dylib" ]; then
+  echo "[提示] 检测到本地环境 libmtp，有线传输功能可用。"
+else
+  echo "[提示] 未检测到 USB 原生依赖或系统 libmtp，有线传输暂不可用（其他功能不受影响）。"
+  echo "       如需有线传输功能，请在项目根目录运行: npm run build:usb-native"
+fi
 
 echo "[提示] 模型不会在启动时下载，请在软件“设置”页面手动下载。"
 echo "[提示] 修改后端代码后需关闭 Terminal 重新启动。"

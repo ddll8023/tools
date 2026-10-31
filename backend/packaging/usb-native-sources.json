@@ -6,15 +6,6 @@
   "mtpz": false,
   "libraries": [
     {
-      "name": "libmtp",
-      "version": "1.1.23",
-      "url": "https://downloads.sourceforge.net/project/libmtp/libmtp/1.1.23/libmtp-1.1.23.tar.gz",
-      "sha256": "74a2b6e8cb4a0304e95b995496ea3ac644c29371649b892b856e22f12a0bdeed",
-      "digestSource": "Homebrew homebrew-core Formula/lib/libmtp.rb @ ad3528e295beb2e10672c5fbca5d68e1d82787ed",
-      "configureArgs": ["--disable-mtpz", "--disable-static", "--enable-shared", "--disable-silent-rules"],
-      "bundledName": "libmtp.dylib"
-    },
-    {
       "name": "libusb-1.0",
       "version": "1.0.30",
       "url": "https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2",
@@ -22,6 +13,15 @@
       "digestSource": "GitHub Release 资产 digest 与 Homebrew Formula/lib/libusb.rb 记录一致",
       "configureArgs": ["--disable-static", "--enable-shared"],
       "bundledName": null
+    },
+    {
+      "name": "libmtp",
+      "version": "1.1.23",
+      "url": "https://downloads.sourceforge.net/project/libmtp/libmtp/1.1.23/libmtp-1.1.23.tar.gz",
+      "sha256": "74a2b6e8cb4a0304e95b995496ea3ac644c29371649b892b856e22f12a0bdeed",
+      "digestSource": "Homebrew homebrew-core Formula/lib/libmtp.rb @ ad3528e295beb2e10672c5fbca5d68e1d82787ed",
+      "configureArgs": ["--disable-mtpz", "--disable-static", "--enable-shared", "--disable-silent-rules"],
+      "bundledName": "libmtp.dylib"
     }
   ]
 }
