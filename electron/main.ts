@@ -1,6 +1,6 @@
-/** 桌面主进程：单实例、窗口、所属后端生命周期和受限桌面能力。 */
+/** 桌面主进程：单实例、窗口、便携数据目录、所属后端生命周期和受限桌面能力。 */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { statSync } from 'fs'
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as http from 'http'
@@ -9,14 +9,10 @@ import { AppLifecycle } from './app-lifecycle'
 import { BackendRuntime } from './backend-runtime'
 import { cancelMarkdownPdf, registerMarkdownPdfIpc } from './markdown-to-pdf'
 import { registerMarkdownSourceIpc } from './markdown-source'
-import {
-  initializeUpdater,
-  notifyUpdaterWindowReady,
-  registerUpdaterIpc,
-  setLifecycle,
-} from './updater'
 
 const APP_DATA_DIR_NAME = '工具盒子'
+const PORTABLE_DATA_DIR_NAME = 'data'
+const DEV_DATA_DIR_NAME = '.dev-data'
 const INTERNAL_APP_NAME = 'toolbox-desktop'
 const SAFE_USER_AGENT = `Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 Electron/${process.versions.electron}`
 const VITE_PORT = 5173
@@ -25,13 +21,43 @@ const ROOT_DIR = path.resolve(__dirname, '..')
 const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend')
 const DEV_BACKEND_DIR = path.join(ROOT_DIR, 'backend')
 
-/** 数据根只解析一次：环境变量、命令行显式值、默认目录三者取首个绝对路径。 */
+/** 打包态数据根：程序目录下的 data/；macOS 的可执行文件在 .app 包体内，取 .app 所在目录。 */
+function portableDataRoot(): string {
+  const executable = app.getPath('exe')
+  const root =
+    process.platform === 'darwin'
+      ? path.resolve(path.dirname(executable), '..', '..', '..')
+      : path.dirname(executable)
+  return path.join(root, PORTABLE_DATA_DIR_NAME)
+}
+
+/** mkdir 不暴露只读目录，必须实际写一个探针文件再删掉才能确认可写。 */
+function ensureWritableDirectory(directory: string): boolean {
+  try {
+    mkdirSync(directory, { recursive: true })
+    const probe = path.join(directory, `.write-probe-${process.pid}`)
+    writeFileSync(probe, '')
+    rmSync(probe, { force: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 数据根只解析一次：命令行与环境的显式目录优先；其次打包态的程序目录 data/、
+ * 开发态的项目根 .dev-data，两者互不覆盖；程序目录不可写时回退系统默认位置并提示。
+ */
 function resolveDataRoot(): string {
   const argument = process.argv.find((item) => item.startsWith('--toolbox-data-dir='))
   const fromArgument = argument ? argument.slice('--toolbox-data-dir='.length) : ''
   const candidate = fromArgument || process.env.TOOLBOX_DATA_DIR || ''
   if (candidate) return path.resolve(candidate)
-  return path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
+  const preferred = app.isPackaged ? portableDataRoot() : path.join(ROOT_DIR, DEV_DATA_DIR_NAME)
+  if (ensureWritableDirectory(preferred)) return preferred
+  const fallback = path.join(app.getPath('appData'), APP_DATA_DIR_NAME)
+  console.warn(`[main] ${preferred} 不可写，数据改存系统默认位置: ${fallback}`)
+  return ensureWritableDirectory(fallback) ? fallback : preferred
 }
 
 // Electron 可能把应用名拼入 User-Agent；内部标识必须保持 ASCII，中文仅用于界面和数据目录。
@@ -39,6 +65,17 @@ app.setName(INTERNAL_APP_NAME)
 app.userAgentFallback = SAFE_USER_AGENT
 const DATA_ROOT = resolveDataRoot()
 app.setPath('userData', DATA_ROOT)
+// Chromium 会话数据与主进程临时文件同样留在数据根内，不散落到系统目录。
+try {
+  const sessionData = path.join(DATA_ROOT, 'session')
+  const temp = path.join(DATA_ROOT, 'temp')
+  mkdirSync(sessionData, { recursive: true })
+  mkdirSync(temp, { recursive: true })
+  app.setPath('sessionData', sessionData)
+  app.setPath('temp', temp)
+} catch (error) {
+  console.error('[main] 无法重定向会话/临时目录:', error instanceof Error ? error.message : error)
+}
 
 const isDev = !app.isPackaged
 const PACKAGED_BACKEND_DIR = path.join(process.resourcesPath, 'backend')
@@ -58,8 +95,6 @@ const lifecycle = new AppLifecycle(backend)
 
 let viteProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
-// 退出流程一旦开始，窗口全部关闭不应被误认为“可重启”状态。
-let quitRequested = false
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -102,12 +137,6 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(ROOT_DIR, 'frontend', 'dist', 'index.html'))
   }
-
-  mainWindow.webContents.once('did-finish-load', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      notifyUpdaterWindowReady(mainWindow)
-    }
-  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -307,41 +336,19 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 app.on('second-instance', () => {
-  void ensureBackendAndWindow()
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
 })
-
-/**
- * 确保后端与窗口同时就绪：窗口存在时只聚焦；窗口已全部关闭且未处于停止状态时，
- * 按需重新启动后端再建窗口，避免出现没有后端的窗口。
- */
-async function ensureBackendAndWindow(): Promise<void> {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
-    return
-  }
-  if (lifecycle.stopped) return
-  if (!backend.isRunning) {
-    try {
-      await backend.start()
-    } catch (err) {
-      console.error('[main] 重新启动后端失败:', err)
-      return
-    }
-  }
-  createWindow()
-}
 
 async function bootstrap(): Promise<void> {
   registerWindowIpc()
-  registerUpdaterIpc()
   // PDF 打印与本地 Markdown 读取都只认主窗口主框架；打包态页面走 file:// 入口。
   const trustedPageUrl = isDev
     ? VITE_URL
     : pathToFileURL(path.join(ROOT_DIR, 'frontend', 'dist', 'index.html')).href
   registerMarkdownPdfIpc(() => mainWindow, trustedPageUrl)
   registerMarkdownSourceIpc(() => mainWindow, trustedPageUrl)
-  setLifecycle(lifecycle)
 
   try {
     console.log('[main] 启动所属后端...')
@@ -373,12 +380,6 @@ async function bootstrap(): Promise<void> {
   }
 
   createWindow()
-  initializeUpdater()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length > 0) return
-    void ensureBackendAndWindow()
-  })
 }
 
 app.whenReady().then(async () => {
@@ -387,15 +388,9 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  // 全平台一致：主窗口关闭即完整退出，后端已在窗口 close 前有序停止。
   stopVite()
-  if (process.platform !== 'darwin') {
-    app.quit()
-    return
-  }
-  if (quitRequested) return
-  // macOS 关闭全部窗口后保留应用：后端已随窗口关闭停止，再次激活时重新启动。
-  lifecycle.resetForRestart()
-  backend.reset()
+  app.quit()
 })
 
 app.on('before-quit', (event) => {
@@ -408,16 +403,8 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (lifecycle.stopping) return
   void lifecycle.prepareClose(mainWindow, 'quit').then((decision) => {
-    // 用户选择留下时不标记退出：否则之后关闭窗口将不再恢复可重启状态。
     if (!decision.ok) return
-    quitRequested = true
     stopVite()
-    const install = lifecycle.takeAfterStop()
-    if (install) {
-      // 安装动作自行结束应用；此处不再触发第二次退出。
-      install()
-      return
-    }
     app.quit()
   })
 })

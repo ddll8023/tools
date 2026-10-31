@@ -1,6 +1,5 @@
 /** 向应用页面暴露受限桌面 API，不公开通用 IPC 或磁盘写入能力。 */
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { UpdateCommandResult, UpdateStatus } from './update-types'
 import type { MarkdownPdfOptions, MarkdownPdfResult } from './markdown-to-pdf-types'
 import type { PreparedMarkdownPayload } from './markdown-source-types'
 
@@ -118,15 +117,5 @@ contextBridge.exposeInMainWorld('desktopApi', {
       ipcRenderer.invoke('markdown-pdf:export', payload) as Promise<MarkdownPdfResult>,
     cancel: (requestId: string) =>
       ipcRenderer.invoke('markdown-pdf:cancel', requestId) as Promise<void>
-  },
-
-  updater: {
-    check: () => ipcRenderer.invoke('updater:check') as Promise<UpdateCommandResult>,
-    quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install') as Promise<UpdateCommandResult>,
-    onStatus: (callback: (status: UpdateStatus) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status)
-      ipcRenderer.on('updater:status', listener)
-      return () => ipcRenderer.removeListener('updater:status', listener)
-    }
   }
 })

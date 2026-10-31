@@ -24,7 +24,7 @@
 | 文件 | 共同职责 | 已知消费者与用途 |
 | --- | --- | --- |
 | `backend/src/toolbox_backend/core/config.py` | `Settings`（pydantic-settings）与全部数据路径属性 | 几乎全部模块：`data_root`、`runtime_dir`、`lan_transfer_root`、`usb_transfer_root`、模型路径、LibreOffice 路径、各类限额 |
-| `backend/src/toolbox_backend/core/runtime.py` | 应用级文件锁、`RuntimeIdentity`、运行阶段、worker 所有权传递、更新守卫 | `lifecycle.py`、`api/v1/health.py`、`api/v1/runtime.py`、`core/control_auth.py`、`usb_transfer/supervisor.py`、`usb_transfer/worker.py` |
+| `backend/src/toolbox_backend/core/runtime.py` | 应用级文件锁、`RuntimeIdentity`、运行阶段、worker 所有权传递 | `lifecycle.py`、`api/v1/health.py`、`api/v1/runtime.py`、`core/control_auth.py`、`usb_transfer/supervisor.py`、`usb_transfer/worker.py` |
 | `backend/src/toolbox_backend/core/control_auth.py` | 每次启动生成控制面凭据并原子落盘，常量时间比对 | `lifecycle.py` 初始化、`control_auth_middleware.py` 校验、主进程 `electron/backend-runtime.ts` 读取 |
 | `backend/src/toolbox_backend/core/logging.py` | `setup_logger` 统一格式；`ProgressLogHandler` 按关键词写任务进度 | 全部后端模块；后者供 PDF 深度解析类流程 |
 | `backend/src/toolbox_backend/core/capabilities.py` | 线程安全的能力状态注册表 | `lifecycle.py` 写入、`tool_catalog` 与 `api/v1/settings.py` 读取 |
@@ -146,13 +146,13 @@
 
 | 文件 | 全局作用 | 相关模块需要读取的范围 |
 | --- | --- | --- |
-| `package.json` | 根脚本与 electron-builder 配置；`main` 指向 `electron/main.js` | `files`、`extraResources`（`build/backend-runtime` → `Resources/backend`、`update-helper.js`）、`mac.sign`、`win.nsis` |
+| `package.json` | 根脚本与 electron-builder 配置；`main` 指向 `electron/main.js` | `files`、`extraResources`（`build/backend-runtime` → `Resources/backend`）、`mac.sign`；`mac`/`win` 的 target 只有 `zip` |
 | `backend/packaging/backend.spec` | PyInstaller 收集规则 | 后端、MinerU/modelscope/mtcnnruntime、`resources/`（排除 `usb`）、局域网 `web/`、macOS USB 原生库 |
-| `backend/packaging/server.py` | 打包后多入口分发 | `--toolbox-mineru`、`--toolbox-mineru-models`、`--toolbox-usb-worker`、`--toolbox-update-guard` 与默认 uvicorn 启动 |
+| `backend/packaging/server.py` | 打包后多入口分发 | `--toolbox-mineru`、`--toolbox-mineru-models`、`--toolbox-usb-worker` 与默认 uvicorn 启动 |
 | `backend/packaging/usb-native-sources.json`、`usb-notices.txt` | USB 原生依赖固定来源、摘要与分发说明 | 仅 `scripts/build-usb-native.js` 与打包产物 |
-| `scripts/build-backend-runtime.js`、`build-usb-native.js`、`sign-macos.js` | 后端运行时构建、USB 原生库构建、macOS ad-hoc 签名 | 由 `npm run build:*` 与 electron-builder 调用 |
-| `.github/workflows/desktop-release.yml` | tag 触发的双平台构建、校验和、Release 发布 | 构建顺序：frontend → electron → backend → electron-builder |
-| `start-dev.command`、`start-dev.bat` | 开发启动脚本 | 先释放 18740/5173 端口，再调用 `npm run dev` |
+| `scripts/build-backend-runtime.js`、`build-usb-native.js`、`sign-macos.js`、`package-portable.mjs` | 后端运行时构建、USB 原生库构建、macOS ad-hoc 签名、便携出包入口 | 由 `npm run build:*`、`scripts/package-portable.mjs` 与 electron-builder 调用 |
+| `.github/workflows/desktop-release.yml` | tag 触发的双平台便携 zip 构建与校验和上传 | 构建顺序：frontend → electron → backend → `scripts/package-portable.mjs` |
+| `scripts/start-dev.sh`、`scripts/start-dev.cmd` | 开发启动脚本 | 先做前置环境守卫（缺依赖即拦下并提示获取方式），macOS 侧释放 18740/5173 端口，再调用 `node electron/dev-runner.js` |
 
 `electron/*.js`、`frontend/dist/`、`build/`、`release/` 是产物，不作为源码登记。
 
@@ -161,7 +161,7 @@
 | 数据／资源 | 定义与维护者 | 实际访问者 | 约束 |
 | --- | --- | --- | --- |
 | 用户数据根 | `core/config.py` 的 `Settings.data_root` | 主进程（解析并注入环境变量）、后端全部可写状态 | 由 `electron/main.ts` 单点解析；后端不自行推断 |
-| 应用所有权锁 | `core/runtime.py` | 后端主进程、USB 工作子进程（描述符延续）、更新守卫 | 非阻塞；不因数据根变化而允许并行 |
+| 应用所有权锁 | `core/runtime.py` | 后端主进程、USB 工作子进程（描述符延续） | 非阻塞；不因数据根变化而允许并行 |
 | 控制面凭据 | `core/control_auth.py` | 主进程 `BackendRuntime.readToken`、`ControlAuthMiddleware` | 每次启动更换；文件权限受限；不进入局域网页面 |
 | 任务临时目录 | `infrastructure/task_storage/workspace.py` | 各转换工具、启动清理 | 24 小时保留窗口，`ensure_task_path` 限定根目录 |
 | 能力状态 | `core/capabilities.py` | `tool_catalog`、`api/v1/settings.py` | 内存态，启动探测 + 设置页操作后刷新 |

@@ -9,9 +9,10 @@
     "build:frontend": "npm --prefix frontend run build",
     "build:backend": "node scripts/build-backend-runtime.js",
     "build:usb-native": "node scripts/build-usb-native.js",
-    "build:release": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --publish never",
-    "dist:mac": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --mac --arm64 --publish never",
-    "dist:win": "npm run build:frontend && npm run compile:electron && npm run build:backend && electron-builder --win --x64 --publish never",
+    "build:release": "npm run build:frontend && npm run compile:electron && npm run build:backend",
+    "package:portable": "npm run build:release && node scripts/package-portable.mjs",
+    "package:mac": "npm run build:release && node scripts/package-portable.mjs --mac",
+    "package:win": "npm run build:release && node scripts/package-portable.mjs --win",
     "electron": "electron .",
     "dev:backend": "uv run --directory backend uvicorn toolbox_backend.main:app --app-dir src --host 127.0.0.1 --port 18740 --reload"
   },
@@ -26,12 +27,6 @@
     "directories": {
       "output": "release"
     },
-    "publish": {
-      "provider": "github",
-      "owner": "ddll8023",
-      "repo": "tools",
-      "releaseType": "release"
-    },
     "files": [
       "package.json",
       "electron/**/*.js",
@@ -44,16 +39,11 @@
         "filter": [
           "**/*"
         ]
-      },
-      {
-        "from": "electron/update-helper.js",
-        "to": "update-helper.js"
       }
     ],
     "mac": {
       "artifactName": "toolbox-${version}-${os}-${arch}.${ext}",
       "target": [
-        "dmg",
         "zip"
       ],
       "category": "public.app-category.utilities",
@@ -63,21 +53,11 @@
     "win": {
       "artifactName": "toolbox-${version}-${os}-${arch}.${ext}",
       "target": [
-        "nsis",
         "zip"
       ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "工具盒子"
     }
   },
   "allowScripts": {
     "electron@43.2.0": true
-  },
-  "dependencies": {
-    "electron-updater": "6.8.9"
   }
 }

@@ -1,4 +1,4 @@
-"""PyInstaller 入口：启动 FastAPI，或复用自身执行 MinerU CLI、USB 工作进程与更新守卫。"""
+"""PyInstaller 入口：启动 FastAPI，或复用自身执行 MinerU CLI 与 USB 工作进程。"""
 
 from __future__ import annotations
 
@@ -30,13 +30,6 @@ def _run_usb_worker() -> None:
 
     raise SystemExit(worker_main())
 
-def _run_update_guard() -> None:
-    """更新安装期间只持有应用所有权，不启动 API、恢复记录或访问设备。"""
-    sys.argv.remove("--toolbox-update-guard")
-    from toolbox_backend.core.runtime import run_update_guard
-
-    raise SystemExit(run_update_guard())
-
 
 def main() -> None:
     if "--toolbox-mineru" in sys.argv:
@@ -49,10 +42,6 @@ def main() -> None:
 
     if "--toolbox-usb-worker" in sys.argv:
         _run_usb_worker()
-        return
-
-    if "--toolbox-update-guard" in sys.argv:
-        _run_update_guard()
         return
 
     # Windows 的 ProcessPoolExecutor 需要此调用才能在 frozen 进程中安全派生。

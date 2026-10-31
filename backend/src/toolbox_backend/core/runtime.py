@@ -1,15 +1,13 @@
-"""应用级系统持有锁与启动身份；USB 子进程延续锁，更新守卫不初始化业务。"""
+"""应用级系统持有锁与启动身份；USB 子进程延续锁。"""
 
 from __future__ import annotations
 
 import errno
-import json
 import os
 import re
 import stat
 import sys
 import threading
-import time
 import uuid
 
 from toolbox_backend.core.config import settings
@@ -124,29 +122,3 @@ def adopt_worker_ownership() -> int:
         raise RuntimeError("USB 应用所有权描述符无效")
     os.set_inheritable(fd, False)
     return fd
-
-
-def run_update_guard() -> int:
-    """等前一个实例释放应用锁后再持有；不生成凭据或业务记录。
-
-    安装 helper 在替换前必须确认本进程已持锁，否则另一实例可能在替换期间启动。
-    """
-    deadline = time.monotonic() + settings.APP_SHUTDOWN_TIMEOUT_SECONDS + 150
-    while True:
-        try:
-            owner = acquire_ownership()
-            break
-        except OwnershipBusyError:
-            if time.monotonic() >= deadline:
-                return 2
-            time.sleep(0.2)
-        except (OSError, RuntimeError, ValueError):
-            return 2
-    try:
-        print(json.dumps({"kind": "ready", "launch_id": owner.launch_id, "pid": owner.pid}), flush=True)
-        # 父 helper 在替换结束后关闭通道；不解释任何设备或文件操作指令。
-        while sys.stdin.buffer.read(1):
-            pass
-        return 0
-    finally:
-        release_ownership()

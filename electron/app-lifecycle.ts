@@ -1,7 +1,7 @@
 /**
- * 应用退出、窗口关闭与更新安装的统一协调。
+ * 应用退出与窗口关闭的统一协调。
  *
- * 顺序固定为：确认传输状态 → 请求取消并等待后端与 USB 确认停止 → 关闭或安装。
+ * 顺序固定为：确认传输状态 → 请求取消并等待后端与 USB 确认停止 → 关闭窗口或退出。
  * 有活动任务或状态未知时默认留在应用；停止未确认时如实记录，不冒充正常取消。
  */
 import { BrowserWindow, dialog } from 'electron'
@@ -16,7 +16,6 @@ export class AppLifecycle {
   private readonly backend: BackendRuntime
   private stopPromise: Promise<LifecycleDecision> | null = null
   private decision: LifecycleDecision | null = null
-  private afterStop: (() => void) | null = null
 
   constructor(backend: BackendRuntime) {
     this.backend = backend
@@ -44,9 +43,9 @@ export class AppLifecycle {
     window: BrowserWindow,
     snapshot: RuntimeSnapshot | null,
     error: string,
-    reason: 'close' | 'quit' | 'install',
+    reason: 'close' | 'quit',
   ): Promise<boolean> {
-    const action = reason === 'install' ? '安装更新' : reason === 'quit' ? '退出应用' : '关闭窗口'
+    const action = reason === 'quit' ? '退出应用' : '关闭窗口'
     const options: Electron.MessageBoxOptions = snapshot && snapshot.usb_active_tasks > 0
       ? {
           type: 'warning',
@@ -109,32 +108,5 @@ export class AppLifecycle {
       return { ok: false, reason: 'user-stayed' }
     }
     return this.runStop()
-  }
-
-  async prepareInstall(window: BrowserWindow | null, run: () => void): Promise<LifecycleDecision> {
-    if (this.decision) {
-      this.afterStop = run
-      return this.decision
-    }
-    const decision = await this.prepareClose(window, 'quit')
-    if (decision.ok) this.afterStop = run
-    return decision
-  }
-
-  /** 取出待执行的安装动作；只允许执行一次。 */
-  takeAfterStop(): (() => void) | null {
-    const action = this.afterStop
-    this.afterStop = null
-    return action
-  }
-
-  /**
-   * macOS 关闭全部窗口后仍可再次激活：清空已停止状态以便重新启动后端。
-   * 退出或安装路径不会经过此处，因此不会把正在进行的退出误当作重启。
-   */
-  resetForRestart(): void {
-    this.stopPromise = null
-    this.decision = null
-    this.afterStop = null
   }
 }

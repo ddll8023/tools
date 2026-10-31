@@ -10,25 +10,6 @@ interface WindowControls {
   onMaximizeChange: (callback: (maximized: boolean) => void) => void
 }
 
-type UpdateStatus =
-  | { state: 'idle' }
-  | { state: 'checking' }
-  | { state: 'available'; version: string }
-  | { state: 'downloading'; version: string; percent: number; bytesPerSecond: number }
-  | { state: 'downloaded'; version: string }
-  | { state: 'error'; message: string }
-
-interface UpdateCommandResult {
-  ok: boolean
-  error?: string
-}
-
-interface UpdaterApi {
-  check: () => Promise<UpdateCommandResult>
-  quitAndInstall: () => Promise<UpdateCommandResult>
-  onStatus: (callback: (status: UpdateStatus) => void) => () => void
-}
-
 /** Markdown PDF 打印选项，与主进程 printToPDF 参数一一对应 */
 interface MarkdownPdfOptions {
   landscape: boolean
@@ -87,7 +68,6 @@ interface DesktopApi {
     cancel: (requestId: string) => Promise<void>
   }
   windowControls: WindowControls
-  updater: UpdaterApi
 }
 
 interface Window {
